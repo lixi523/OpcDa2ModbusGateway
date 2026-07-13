@@ -1,0 +1,78 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net472</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <RootNamespace>OpcDaToUaGateway</RootNamespace>
+    <AssemblyName>OpcDaToUaGateway</AssemblyName>
+    <StartupObject>OpcDaToUaGateway.Program</StartupObject>
+    <LangVersion>8.0</LangVersion>
+    <!-- OPC DA 服务器通常是 32 位 COM 组件，必须以 x86 运行才能正确调用 -->
+    <PlatformTarget>x86</PlatformTarget>
+    <ApplicationIcon>app.ico</ApplicationIcon>
+    <!-- 要求以管理员权限运行：嵌入清单文件，requestedExecutionLevel=requireAdministrator -->
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Version>1.5.0</Version>
+    <AssemblyVersion>1.5.0.0</AssemblyVersion>
+    <FileVersion>1.5.0.0</FileVersion>
+    <Company>OPC DA to UA Gateway</Company>
+    <Product>OPC DA to OPC UA Gateway</Product>
+    <Description>OPC DA 到 OPC UA 协议转换网关</Description>
+    <Copyright>Copyright © 2026</Copyright>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 排除 Watchdog 和 Keygen 子项目自动生成的文件，避免 CS0579 重复程序集属性 -->
+    <Compile Remove="Watchdog\**" />
+    <None Remove="Watchdog\**" />
+    <EmbeddedResource Remove="Watchdog\**" />
+    <Compile Remove="Keygen\**" />
+    <None Remove="Keygen\**" />
+    <EmbeddedResource Remove="Keygen\**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Costura.Fody" Version="5.7.0">
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
+    <!-- OPC UA 服务器端核心库（OPC Foundation 官方，免费） -->
+    <PackageReference Include="OPCFoundation.NetStandard.Opc.Ua.Server" Version="1.5.378.145" />
+    <PackageReference Include="OPCFoundation.NetStandard.Opc.Ua.Configuration" Version="1.5.378.145" />
+    <!-- OPC DA 客户端：TitaniumAS.Opc.Client（MIT 开源，替代 Technosoftware 商业库） -->
+    <PackageReference Include="TitaniumAS.Opc.Client" Version="1.0.2" />
+    <!-- H-30: 显式引用 Costura 需要嵌入的传递依赖，确保 dotnet build 时 CopyLocal 生效 -->
+    <PackageReference Include="BouncyCastle.Cryptography" Version="2.6.2" />
+    <!-- 以下为 .NET Framework 内置程序集，Costura 不需要嵌入，移除即可 -->
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- dynamic 关键字支持（COM Automation 接口需要）-->
+    <Reference Include="Microsoft.CSharp" />
+    <!-- WMI 硬件信息查询（授权码 PCID 生成需要）-->
+    <Reference Include="System.Management" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="config.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="app.ico">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <!-- 编译前先还原并编译看门狗项目，再将其 EXE 复制到主程序输出目录 -->
+  <Target Name="BuildAndCopyWatchdog" BeforeTargets="Build">
+    <Exec Command="dotnet build &quot;$(MSBuildProjectDirectory)\Watchdog\OpcDaToUaGateway.Watchdog.csproj&quot; -c $(Configuration) -v q" />
+    <Copy SourceFiles="Watchdog\bin\$(Configuration)\$(TargetFramework)\OpcDaToUaGateway.Watchdog.exe" DestinationFolder="$(OutputPath)" SkipUnchangedFiles="true" />
+  </Target>
+
+  <!-- 编译授权码生成工具并复制到主程序输出目录 -->
+  <Target Name="BuildAndCopyKeygen" BeforeTargets="Build">
+    <Exec Command="dotnet build &quot;$(MSBuildProjectDirectory)\Keygen\OpcDaToUaGateway.Keygen.csproj&quot; -c $(Configuration) -v q" />
+    <Copy SourceFiles="Keygen\bin\$(Configuration)\$(TargetFramework)\OpcDaToUaGateway.Keygen.exe" DestinationFolder="$(OutputPath)" SkipUnchangedFiles="true" />
+  </Target>
+
+</Project>

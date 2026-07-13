@@ -1,0 +1,39 @@
+name: Build OpcDaToUaGateway
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      # windows-latest 预装 Visual Studio（含 .NET 桌面开发工作负载），
+      # 提供 net472 目标包与 Windows Forms 引用程序集，可直接 dotnet build net472。
+      - name: Restore
+        run: dotnet restore OpcDaToUaGateway.sln
+
+      - name: Build (Release)
+        run: dotnet build OpcDaToUaGateway.sln -c Release -v minimal
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpcDaToUaGateway
+          # SDK 风格输出含 net472 子目录
+          path: |
+            bin/Release/net472/
+            Keygen/bin/Release/net472/
+            Watchdog/bin/Release/net472/
+          if-no-files-found: warn

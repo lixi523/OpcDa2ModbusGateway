@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Weavers xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="FodyWeavers.xsd">
+  <Costura>
+    <!-- 将所有托管依赖 DLL 嵌入到主 exe 中，实现无外部 DLL 部署 -->
+    <IncludeAssemblies>
+      Newtonsoft.Json
+      Opc.Ua.Configuration
+      Opc.Ua.Core
+      Opc.Ua.Security.Certificates
+      Opc.Ua.Server
+      Opc.Ua.Types
+      TitaniumAS.Opc.Client
+      <!-- M8 注意：以下两个 BouncyCastle 程序集来自不同版本的 OPC UA SDK 依赖，
+           虽然名称相似但 API 不同（旧版 vs 新版），目前都需要嵌入。
+           未来升级 OPC UA SDK 版本后可能可以移除其中一个。 -->
+      BouncyCastle.Cryptography
+      Microsoft.Bcl.AsyncInterfaces
+      Microsoft.Bcl.HashCode
+      Microsoft.Extensions.DependencyInjection.Abstractions
+      Microsoft.Extensions.DependencyInjection
+      Microsoft.Extensions.Logging.Abstractions
+      Microsoft.Extensions.Logging
+      Microsoft.Extensions.Options
+      Microsoft.Extensions.Primitives
+      System.Buffers
+      System.Collections.Immutable
+      System.Diagnostics.DiagnosticSource
+      System.Formats.Asn1
+      System.IO.Pipelines
+      System.Memory
+      System.Numerics.Vectors
+      System.Runtime.CompilerServices.Unsafe
+      System.Text.Encodings.Web
+      System.Text.Json
+      System.Threading.Tasks.Extensions
+    </IncludeAssemblies>
+  </Costura>
+</Weavers>

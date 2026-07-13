@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net472</TargetFramework>
+    <AssemblyName>OpcDaToUaGateway.Watchdog</AssemblyName>
+    <RootNamespace>OpcDaToUaGateway.Watchdog</RootNamespace>
+    <PlatformTarget>x86</PlatformTarget>
+    <LangVersion>8.0</LangVersion>
+    <ApplicationIcon>..\app.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Version>1.5.0</Version>
+    <AssemblyVersion>1.5.0.0</AssemblyVersion>
+    <FileVersion>1.5.0.0</FileVersion>
+    <Company>OPC DA to UA Gateway</Company>
+    <Product>OPC DA to OPC UA Gateway Watchdog</Product>
+    <Description>OPC DA 到 OPC UA 网关看门狗进程监控</Description>
+    <Copyright>Copyright © 2026</Copyright>
+  </PropertyGroup>
+
+</Project>

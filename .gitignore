@@ -1,0 +1,30 @@
+# ===== 构建产物（可再生，禁止入库）=====
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+
+# ===== Visual Studio / 本地用户文件 =====
+.vs/
+*.user
+*.userosscache
+*.suo
+*.userprefs
+
+# ===== Rider / ReSharper =====
+.idea/
+
+# ===== NuGet =====
+*.nupkg
+.nuget/
+
+# ===== 日志 =====
+*.log
+crash.log
+
+# ===== 本地工作记忆（非源码，保持仓库干净）=====
+.workbuddy/
+
+# ===== OS 杂项 =====
+Thumbs.db
+Desktop.ini
