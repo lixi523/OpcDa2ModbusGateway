@@ -1,5 +1,7 @@
 # OPC DA → OPC UA 网关（OpcDaToUaGateway）
 
+![Build](https://github.com/lixi523/OpcDaToUaGateway/actions/workflows/build.yml/badge.svg)
+
 > 版本：**V1.5.0** ｜ 协议转换网关：将 OPC DA 数据源实时映射为 OPC UA 服务器，供上位 SCADA/MES/工业平台订阅。
 
 ---
