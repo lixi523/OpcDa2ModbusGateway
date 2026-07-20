@@ -1,8 +1,8 @@
-# OPC DA → OPC UA 网关（OpcDaToUaGateway）
+﻿# OPC DA → OPC UA 网关（OpcDaToUaGateway）
 
 ![Build](https://github.com/lixi523/OpcDaToUaGateway/actions/workflows/build.yml/badge.svg)
 
-> 版本：**V1.5.0** ｜ 协议转换网关：将 OPC DA 数据源实时映射为 OPC UA 服务器，供上位 SCADA/MES/工业平台订阅。
+> 版本：**V1.9.0** ｜ 协议转换网关：将 OPC DA 数据源实时映射为 OPC UA 服务器，供上位 SCADA/MES/工业平台订阅。
 
 ---
 
@@ -88,7 +88,20 @@ dotnet build OpcDaToUaGateway.sln -c Release -v minimal
 
 ---
 
-## 7. 文档索引
+## 6.1 版本历史
+
+| 版本 | 日期 | 变更摘要 |
+|---|---|---|
+| **V1.9.0** | 2026-07-17 | **全面代码审查 + P0 修复**：修复 `HealthSnapshot.Capture()` Monitor.TryEnter/Exit 不配对导致 `SynchronizationLockException`（2处）；实施 P1 改进：`DataBridge.StartAsync` _uaServer 快照防竞态、`LicenseManager` _disposed 防 Tick 后执行、`LogManager.Dispose` 超时改 `_log.Append` 告警、`ConfigManager` 实现 `IDisposable`、`AppVersion` 同步。编译 0 警告 0 错误。 |
+| V1.8.1 | 2026-07-17 | **启动卡顿最终修复**：3.5 万次 `AddVariableNode` 移至后台线程（`Task.Run`），UI 线程通过 `SynchronizationContext.Post` 安全输出进度日志。真实环境验证窗口保持响应。 |
+| V1.8.0 | 2026-07-16 | 移除 V1.7.0 新增的「已连接客户端」列表功能；修复启动窗口「未响应」卡顿根因（逐节点 `Diag()` 导致 O(n²) 日志洪泛）。编译 0 警告 0 错误。 |
+| V1.7.0 | 2026-07-15 | 定稿发布：修复 3 个运行时缺陷（`SafeBeginInvoke` 句柄防护、UTC 时间戳显示转换、DA 质量判定修正 `value.Quality.Status & 0xC0`）；UA 设置区 UI 调整。 |
+| V1.6.0 | — | 新增 OPC DA 同步/异步获取模式。 |
+| V1.5.1 | — | 修复 `RunningStateChanged` 跨线程异常、`SafeInvoke` 封送与缺句柄防护。 |
+
+---
+
+## 7.1 文档索引
 
 | 文档 | 用途 | 读者 |
 |---|---|---|
@@ -97,12 +110,29 @@ dotnet build OpcDaToUaGateway.sln -c Release -v minimal
 | [`OPC_DA转UA网关开发指南.md`](OPC_DA转UA网关开发指南.md) | 架构、模块、版本演进史 | 开发者 |
 | [`handoff.md`](handoff.md) | 交接说明与边界约定 | 接手开发者 |
 | [`PLAN.md`](PLAN.md) | 迭代计划与优先级 | 项目管理者 |
-| [`STATUS.md`](STATUS.md) | 当前状态与风险 | 团队 |
+| [`STATUS.md](STATUS.md) 当前状态与风险（含版本历史、编译状态、风险点） | 团队 |
 | [`本地编译步骤.md`](本地编译步骤.md) | 本机/CI 编译实操 | 构建负责人 |
 
 ---
 
-## 8. 授权
+---
+
+## 8. 风险与建议
+
+| 风险 | 状态 | 说明 |
+|---|---|---|
+| 事件订阅泄漏 / 跨线程异常 | ✅ 已解决 | `RunningStateChanged` 补 `SafeInvoke` 封送；`SafeInvoke` 增加 `IsDisposed/IsHandleCreated` 防护 |
+| SafeInvoke 死锁 | ✅ 已缓解 | 保持 `Invoke`（与 `LogManager` 一致），增加句柄防护规避关闭期 `ObjectDisposedException` |
+| 频繁翻转 bool 标签不更新 | ✅ 已解决 | `UpdateValue` 单调时间戳下限改为网关 UTC 时钟；快照时间戳改用网关接收时刻 |
+| 未运行时测试 | 🔴 高 | 无 OPC DA 真实环境验证；编译 0 警告 0 错误，逻辑已静态核对 |
+| [Conditional("DEBUG")] 排障信息丢失 | 🟡 中 | Release 模式移除诊断日志，生产环境排障需临时用 Debug 构建 |
+
+**建议**：
+1. 在实际 OPC DA 环境中启动网关，验证 3.5 万节点场景窗口保持响应
+2. 如需新功能：按后续指令执行
+
+---
+
 
 程序含试用授权，到期需授权码激活。`Keygen` 子项目为离线授权码计算工具（需合法授权参数）。授权逻辑见 `Services/LicenseManager.cs`。
 

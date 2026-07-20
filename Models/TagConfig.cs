@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using Opc.Ua;
@@ -117,6 +118,20 @@ namespace OpcDaToUaGateway.Models
     }
 
     /// <summary>
+    /// OPC DA 数据获取方式。
+    /// Async = 异步订阅（服务器主动推送，经 ValuesChanged 回调）；
+    /// Sync  = 同步轮询（网关按刷新频率定时 group.Read 主动拉取）。
+    /// 默认 Async，与历史行为一致。
+    /// </summary>
+    public enum DaAcquisitionMode
+    {
+        /// <summary>异步订阅：依赖 OPC DA 服务器的数据变化回调推送。</summary>
+        Async,
+        /// <summary>同步轮询：网关定时主动读取，不依赖服务器回调。</summary>
+        Sync
+    }
+
+    /// <summary>
     /// OPC DA 连接配置，对应 config.json 中的 "OpcDa" 节点。
     /// 包含 DA 服务器的连接信息和要读取的标签列表。
     /// </summary>
@@ -133,6 +148,26 @@ namespace OpcDaToUaGateway.Models
 
         /// <summary>数据刷新频率（毫秒），决定 DA 客户端轮询或订阅的时间间隔。</summary>
         public int UpdateRateMs { get; set; }
+
+        /// <summary>
+        /// 数据获取方式：Async(异步订阅推送) / Sync(同步轮询拉取)。
+        /// 仅作字符串存储，实际解析经 <see cref="GetEffectiveMode"/>，
+        /// 容错笔误/缺失（未知值统一回退 Async）。
+        /// </summary>
+        public string Mode { get; set; }
+
+        /// <summary>
+        /// 获取有效的数据获取模式。
+        /// 当 <see cref="Mode"/> 为 "Sync"(不区分大小写) 时返回 <see cref="DaAcquisitionMode.Sync"/>，
+        /// 其余（空值、无法识别）一律回退 <see cref="DaAcquisitionMode.Async"/>，
+        /// 确保配置文件缺失该字段或笔误时不会中断网关启动。
+        /// </summary>
+        public DaAcquisitionMode GetEffectiveMode()
+        {
+            if (string.Equals(Mode, "Sync", StringComparison.OrdinalIgnoreCase))
+                return DaAcquisitionMode.Sync;
+            return DaAcquisitionMode.Async;
+        }
 
         /// <summary>
         /// 要读取的标签列表。

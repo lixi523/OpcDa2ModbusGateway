@@ -146,10 +146,9 @@ namespace OpcDaToUaGateway
 
                 FolderState parentFolder = GetOrCreateFolder(branchPath);
 
-                var variableId = new NodeId(nodeId ?? $"DaTag_{tagKey}", _namespaceIndex);
                 var variable = new BaseDataVariableState(null)
                 {
-                    NodeId = variableId,
+                    NodeId = new NodeId(nodeId ?? $"DaTag_{tagKey}", _namespaceIndex),
                     BrowseName = new QualifiedName(itemId, _namespaceIndex),
                     DisplayName = new LocalizedText(displayName),
                     DataType = GetDataTypeId(dataType),
@@ -175,10 +174,6 @@ namespace OpcDaToUaGateway
 
                 // P1 优化：缓存变量引用，避免每次 UpdateValue 时做 O(n) 的 Find 查找。
                 _variableCache[tagKey] = variable;
-
-                Diag($"[诊断] 变量节点已注册 — TagKey: {tagKey}, NodeId: {variableId}, " +
-                    $"BrowseName: {itemId}, 父文件夹: {branchPath ?? "(root)"}, " +
-                    $"当前缓存总数: {_variableCache.Count}");
             }
         }
 
@@ -335,7 +330,23 @@ namespace OpcDaToUaGateway
                     return;
 
                 variable.Value = value;
-                variable.Timestamp = sourceTimestamp;
+
+                // V1.6.3 修复（延续）：bool 等快速翻转标签，OPC DA 服务器送来的源时间戳
+                // 常长期冻结（实测约 8-9 分钟才变化），而数值本身在快速变化。故 UA SourceTimestamp
+                // 必须以网关自身时钟为基准，而非 DA 源戳。DataBridge 现已统一以网关接收时刻(UTC)
+                // 作为 sourceTimestamp 传入（见 DataBridge.OnDaDataChanged 注释），此处以其为基准
+                // 并强制单调递增：
+                //   1) 不低于传入的网关接收 UTC（实时推进，杜绝冻结）；
+                //   2) 不低于上一轮戳 +1 tick（绝对单调，杜绝回退/重复，驱动 UA 变化检测）。
+                // 二者取最大，既符合 OPC UA 对 SourceTimestamp 为 UTC 的规范，
+                // 又保证每次送达都被识别为新数据，bool 翻转标签即可正常上送。
+                // 注：该 recvUtc 与 MainForm 监控快照所用时间戳为同一值，故两侧时间戳严格一致。
+                DateTime srcUtc = sourceTimestamp.ToUniversalTime();
+                DateTime lastTs = variable.Timestamp;
+                DateTime ts = srcUtc;
+                if (lastTs.AddTicks(1) > ts) ts = lastTs.AddTicks(1);
+                variable.Timestamp = ts;
+
                 // P2 修复：使用 Bad 而非 Uncertain 表示坏质量数据。
                 variable.StatusCode = isGood ? StatusCodes.Good : StatusCodes.Bad;
             }

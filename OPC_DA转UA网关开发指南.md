@@ -1,6 +1,6 @@
 # OPC DA 转 OPC UA 网关开发指南
 
-**版本：1.5.0**
+**版本：1.8.0**
 
 ## 项目概述
 
@@ -111,7 +111,7 @@ Program.cs (STA 入口 + 单实例 Mutex)
 ```
 OpcDaToUaGateway/
 ├── OpcDaToUaGateway.sln              # 解决方案文件（含三个项目）
-├── OpcDaToUaGateway.csproj           # 主项目文件（含版本号 1.3.9）
+├── OpcDaToUaGateway.csproj           # 主项目文件（含版本号 1.8.0）
 ├── FodyWeavers.xml                   # Costura.Fody DLL 嵌入配置
 ├── Program.cs                        # 应用程序入口 (STAThread + 单实例 Mutex)
 ├── MainForm.cs                       # 主窗口（UI 构建 + 协调各 Manager）
@@ -158,6 +158,7 @@ OpcDaToUaGateway/
   "OpcDa": {
     "ServerProgId": "Matrikon.OPC.Simulation.1",
     "UpdateRateMs": 1000,
+    "Mode": "Async",
     "Tags": [
       { "ItemId": "Random.Int32", "DisplayName": "...", "DataType": "Int32" }
     ]
@@ -253,7 +254,10 @@ OpcUaConfig 提供 `GetEffective*()` 系列方法处理空值/默认值回退，
 **数据采集策略：**
 - **异步订阅（主）：** DA 服务器的 `DataChangedEvent` 回调，数据变化时自动触发
 - **定时同步读取（兜底）：** 每 5 分钟（`SyncIntervalMs = 300000`）通过 `DoSyncRead()` 主动从 DA 服务器拉取一次全部点位值，防止异步回调丢包导致数据长期停滞。同步读取结果通过 `OnDataChanged` 事件投递，与异步回调共用同一数据通路，DataBridge 无需改动
+- **获取模式（V1.6.0）：** 通过 `OpcDaConfig.Mode`（`Async`/`Sync`，UI「数据获取」下拉设置，默认 `Async`）显式选择数据获取方式。`Async` 维持异步订阅 + 5 分钟同步兜底；`Sync` 关闭订阅回调、置 `IsSubscribed=false`，改为按 `UpdateRateMs` 定时 `group.Read` 主动轮询。对应 `OpcDaClient.Start(int updateRateMs, DaAcquisitionMode mode)` 按模式分支，`TryReconnect` 自动复用模式。非 `"Sync"`（含空值/笔误）一律回退 `Async`
 - **异常上报（v1.3.4）：** `OnDataChangedEvent` 中原有的空 catch 块替换为通过 `OnStatusChanged` 事件上报异常信息，避免 DA 回调异常被静默吞没导致数据丢失而无诊断线索
+
+**质量判定（2026-07-15 修复）：** 数据质量必须用语义正确的 OPC DA 数据质量位——`value.Quality.Status` 高 2 位 `0xC0` 表示 Good（即 `((int)quality.Status & 0xC0) == 0xC0`），而非操作结果 `value.Error.Succeeded`（后者仅表示本次读取/订阅操作是否成功，与数据质量无关）。原先误用 `Error.Succeeded` 做硬跳过，会把 pSpace 等服务器订阅回调中 `Error.Succeeded=false` 但数据质量良好的有效数据丢弃，导致 UA 客户端看到大量点位质量 Bad。修复后按真实质量上送（良好即 Good，确属坏质量才标 Bad），新增 `IsQualityGood(OpcDaQuality)` 公共方法，异步 `OnValuesChanged` 与定时 `DoSyncRead` 两处回调同步修正。
 
 **TagKey 机制：**
 
@@ -276,7 +280,7 @@ DA 回调 (ItemName="Tag1", Value=42)
 
 ```csharp
 public OpcDaClient(string progId, List<TagConfig> tags, string host = "localhost") // 构造（支持远程 DA 服务器）
-public void Start(int updateRateMs)                              // 连接 + 订阅 + 启动 5 分钟同步定时器
+public void Start(int updateRateMs, DaAcquisitionMode mode)      // 连接 + 订阅/轮询（按 mode 分支）+ 启动 5 分钟同步定时器（Async 模式）
 public bool TryReconnect(int updateRateMs)                       // 内部看门狗重连
 public static List<OpcDaItemInfo> BrowseAllItems(string progId)  // 浏览地址空间
 private void DoSyncRead()                                       // 5 分钟定时同步读取（兜底保障）
@@ -313,7 +317,7 @@ public GatewayOpcUaServer(OpcUaConfig uaConfig)
 | 安全模式 | `uaConfig.SecurityMode` | None / Sign / SignAndEncrypt |
 | 安全策略 | `uaConfig.SecurityPolicy` | None / Basic256Sha256 等 |
 | 证书自动接受 | `uaConfig.AutoAcceptCertificates` | 开发阶段建议 true |
-| 最大会话数 | `uaConfig.MaxSessionCount` | 默认 50 |
+| 连接数 | `uaConfig.MaxSessionCount` | 默认 50 |
 | 会话超时 | `uaConfig.SessionTimeout` | 默认 120000ms |
 
 安全策略集合根据 `secMode` 条件构建：当安全模式为 `None` 时才添加 `None` 策略（兼容调试），配置了 Sign 或 SignAndEncrypt 模式时排除 `None` 策略，强制客户端使用加密连接（v1.3.4 修复：原先始终包含 None 策略导致安全模式下仍可降级为无加密）。
@@ -348,6 +352,8 @@ ItemId = "Bucket_Brigade.Int4"
 
 **运行时节点创建（v1.3.6）：** 变量和文件夹节点使用 `parent.AddChild(instance)` + `AddPredefinedNode(SystemContext, instance)` 两步创建。SDK 1.5.378.145 的 `CreateNode` API 内部 `instance.Create(..., assignNodeIds=true)` 在大批量（35000+）场景下触发 `BaseDataVariableState` 内部 NRE，绕开此步骤后稳定性已验证。`AddChild` 建立的 `Organizes` 引用是 UA 客户端 Browse 遍历的基础机制。
 
+**⚠ 启动性能红线（v1.8.0 修复）：** `AddVariableNode` 在大批量（3.5 万+）场景下被高频调用，**严禁在方法体内调用 `Diag()` / `Log()` 等逐节点诊断**——`Diag` 经 `OnStatusChanged` → `LogManager.Append` → `BeginInvoke` 向 UI 线程投递数万次日志更新，`UpdateTextBox` 每次 O(文本长度)、累计 O(n²)，会导致窗口约 7 分钟「未响应」。`AddPredefinedNode` 本身为 O(1)（反编译 `Opc.Ua.Server.dll` 1.5.378.145 确认仅做 `PredefinedNodes` 字典注册 + 空子节点递归，无逐节点通知/地址空间重建），**无需也不应做"批量加载"跳过**——跳过它会绕过必要的节点注册，且对性能无益。进度反馈应放在 `DataBridge.Start()` 中按 ~5% 节流输出（见上文）。
+
 **诊断功能（v1.3.6）：**
 
 | 属性 | 说明 |
@@ -373,7 +379,7 @@ ItemId = "Bucket_Brigade.Int4"
 ```csharp
 public async Task StartAsync()
 public void AddVariableNode(string tagKey, string itemId, string displayName, BuiltInType dataType)
-public void UpdateValue(string tagKey, object value, bool isGood, DateTime sourceTimestamp)  // 坏质量使用 StatusCodes.Bad（非 Uncertain）
+public void UpdateValue(string tagKey, object value, bool isGood, DateTime sourceTimestamp)  // 坏质量使用 StatusCodes.Bad（非 Uncertain）；SourceTimestamp 基准为 DataBridge 统一传入的网关接收时刻 recvUtc（UTC），取 max(srcUtc, lastTs+1tick) 保证严格单调递增且两侧同源（UA SourceTimestamp 与监控快照时间戳代表同一瞬间，见 V1.7.0 时间戳同源统一）
 public async Task StopAsync()
 ```
 
@@ -401,6 +407,10 @@ public async Task StopAsync()
 **快照顺序保证：** `_orderedKeys` 列表在构造时确定标签顺序，`GetSnapshots()` 按此顺序返回，确保与 UI 表格行一一对应。
 
 **类型转换：** `ConvertValue` 方法根据 TagConfig 中配置的 `DataType`，将 DA 返回的 COM VARIANT 值转换为对应的 .NET 类型（`Convert.ToInt32`、`Convert.ToDouble` 等）。
+
+**时间戳同源统一（2026-07-15 修复）：** `OnDaDataChanged` 在 DA 回调入口统一取 `DateTime recvUtc = DateTime.UtcNow`（网关接收时刻），同一值**同时**传给 `_uaServer.UpdateValue(...)` 与本地快照 `TagSnapshot.Timestamp`，确保 UA SourceTimestamp 与监控表格时间戳代表同一瞬间、严格同源。原实现将 DA 源戳 `value.Timestamp.LocalDateTime` 传给 UA、监控快照另取一次 `DateTime.UtcNow`，两侧基准不同源——当 DA 服务器时钟与本机存在偏差、或源戳冻结（bool 类标签实测 8–9 分钟才动）时，UA 与监控显示系统性错位。修改后 `UpdateValue` 内部简化为 `ts = max(srcUtc, lastTs+1tick)`（`srcUtc` 即传入的 `recvUtc`），不再引入独立的网关时钟基准。`recvUtc` 本身即 UTC，符合 OPC UA 对 SourceTimestamp 为 UTC 的规范。
+
+**值差异说明（非缺陷）：** UA 客户端看到的「当前值」天然比监控滞后**最多一个发布周期**——网关把最新值推给 UA 服务器后，UA 客户端按自身订阅配置的 `PublishingInterval`/`SamplingInterval` 收值，而监控界面轮询更频繁。这是 OPC UA 标准订阅语义，非网关 bug；建议在 UA 客户端调小发布间隔（如 200–500ms）并设足够大 `QueueSize` 以收敛差异。
 
 ### 5. OpcServerScanner — DA 服务器发现
 
@@ -437,7 +447,7 @@ MainForm 自 v1.3.1 起仅作为 UI 协调层，所有业务逻辑已拆分至 `
 | 区域 | 内容 |
 |---|---|
 | OPC DA 服务器 | ProgId 输入框、浏览按钮、获取点位按钮 |
-| OPC UA 服务器设置 | 监听地址、端口、安全模式、证书策略、最大会话数、端点 URL 预览 |
+| OPC UA 服务器设置 | 监听地址、端口号、安全模式、证书策略、连接数、端点 URL 预览、右侧「已连接客户端」列表 |
 | 控制面板 | 启动/停止按钮、导出点表、自动选项（DA/UA/开机/守护）、状态标签、关于按钮 |
 | 标签数据监控 | DataGridView 虚拟模式（VirtualMode）实时显示标签值、质量、时间戳，支持 50000+ 行 |
 | 运行日志 | 文本框由 LogManager 管理（同时写入文件） |
@@ -483,6 +493,8 @@ RefreshStats() (每秒触发):
 CellValueNeeded 事件 (DataGridView 渲染时按需触发):
   → 列 0-1: 从 _gridTags[rowIndex] 读取 DisplayName / ItemId
   → 列 2-4: 从 _cachedSnapshots[rowIndex] 读取 Value / Quality / Timestamp
+
+**时间戳本地化（2026-07-15 修复）：** `TagSnapshot.Timestamp` 在内存中为 UTC（符合 OPC UA SourceTimestamp 规范），监控表格显示时通过 `snap.Timestamp.ToLocalTime().ToString("HH:mm:ss.fff")` 转为本地时间，避免北京用户(UTC+8)看到的时间比实际墙钟慢 8 小时。数据模型不改动，仅 UI 展示层转换。
 
 CellFormatting 事件:
   → 质量列 (列3): "Good" 绿色 / 其他 红色
@@ -670,7 +682,7 @@ public void SignalGracefulExit()                      // 设置优雅退出事�
 ```
 StartAsync()
   1. _uaServer = new GatewayOpcUaServer(_config.OpcUa) → await StartAsync()
-  2. _daClient = new OpcDaClient(Config.OpcDa.ServerProgId, tags) → Start(updateRateMs)
+  2. _daClient = new OpcDaClient(Config.OpcDa.ServerProgId, tags) → Start(updateRateMs, Config.OpcDa.GetEffectiveMode())
   3. _bridge = new DataBridge(_daClient, _uaServer, tags) → Start()
   → IsRunning = true
 ```
@@ -849,6 +861,8 @@ public static bool VerifyAuthCode(string pcid, string authCode) // 验证授权�
 
 **辅助方法（v1.3.4）：** 提取 `CreateListViewItem` 辅助方法，统一创建 ListView 行的逻辑（设置 Text、Tag、SubItems），消除重复代码。
 
+**SafeBeginInvoke 防护（2026-07-15 修复）：** `BeginBrowse` 在 `Task.Run` 后台线程执行 `BrowseAllItems`，其 `logger` 回调需更新 UI 控件。原代码裸调 `BeginInvoke`，当后台线程首条日志在对话框窗口句柄创建前触发时抛 `InvalidOperationException: 在创建窗口句柄之前，不能在控件上调用 Invoke 或 BeginInvoke`。新增 `SafeBeginInvoke(Action)`——`IsDisposed` 直接返回，`IsHandleCreated` 则正常 `BeginInvoke`，**句柄未就绪时订阅 `HandleCreated` 事件，待 UI 线程创建句柄后再执行**，确保竞态不崩溃且 `OnBrowseComplete`/`OnBrowseFailed` 终态回调不丢失（与 `MainForm.SafeInvoke` 防护范式一致）。替换三处裸 `BeginInvoke`（状态标签更新、`OnBrowseComplete`、`OnBrowseFailed`）。
+
 ### 13. ServerSelectionDialog — 服务器选择对话框
 
 **职责：** 显示已发现的 DA 服务器列表，支持过滤搜索，选择目标服务器。
@@ -983,9 +997,9 @@ UI 日志文本框超过 100,000 字符时自动截断到后 50,000 字符。
 版本号在 `.csproj` 中统一管理：
 
 ```xml
-<Version>1.3.9</Version>
-<AssemblyVersion>1.3.9.0</AssemblyVersion>
-<FileVersion>1.3.8.0</FileVersion>
+<Version>1.8.0</Version>
+<AssemblyVersion>1.8.0.0</AssemblyVersion>
+<FileVersion>1.8.0.0</FileVersion>
 ```
 
 同时硬编码在以下位置（需同步更新）：
@@ -1156,6 +1170,16 @@ WMI 硬件标识（CPU ProcessorId、主板序列号、BIOS 序列号）在同�
 
 | 版本 | 日期 | 变更 |
 |---|---|---|
+| 1.8.0 | 2026-07-16 | **移除「已连接客户端」列表功能并升级版本号**：撤销 V1.7.0(2026-07-15) 在「OPC UA 服务器设置」区右侧新增的「已连接客户端」列表——删除 `MainForm` 的 `_grpClients`/`_lstClients` 控件、`RefreshConnectedClients()` 定时器刷新逻辑及 `SetUiRunningState` 停止清空逻辑；删除 `GatewayOpcUaServer.GetConnectedClients()` 方法与 `GatewayServer.ServerInternalAccess` 属性、`IGatewayOpcUaServer.GetConnectedClients()` 接口声明；OPC UA 设置区分组高度回退至 150、布局恢复紧凑。撤销原因：该列表每 1~3 秒在 UI 线程经 `SessionManager.GetSessions()` 访问 OPC UA SDK 会话管理器，与 UA 客户端请求线程竞争 SDK 内部锁，导致窗口「未响应」；移除后该访问路径彻底消除。**启动卡顿修复：** 启动网关后窗口「未响应」已定位并修复——根因为 `GatewayNodeManager.AddVariableNode` 在每次创建变量节点时调用 `Diag()`，经 `OnStatusChanged`→`_log.Append`→`BeginInvoke` 向 UI 线程投递数万次日志更新（`LogManager.UpdateTextBox` 每次 O(文本长度)、累计 O(n²)），3.5 万节点场景导致约 7 分钟卡死；该 `Diag` 路径独立于 `DataBridge` 已节流的 `Log`，此前排查时未被覆盖（"已排除诊断日志洪泛"结论不准确）。已移除该逐节点诊断调用；节点创建仍走 O(1) 的 `AddPredefinedNode`（经反编译 `Opc.Ua.Server.dll` 1.5.378.145 确认其仅做 `PredefinedNodes` 字典注册 + 空子节点递归，无逐节点通知/地址空间重建）。三个项目版本号统一升至 1.8.0；编译 0 警告 0 错误 ✅ |
+| 1.7.0 (UA 设置区 UI 调整) | 2026-07-15 | **调整「OPC UA 服务器设置」区（版本号保持 1.7.0 不变）**：① 监听地址与安全模式下拉框宽度统一为 140；② 标签「端口」→「端口号」、「最大会话数」→「连接数」，且端口号与连接数左对齐（标签 x=250、控件 x=310）；③ 「自动接受客户端证书」移至安全模式下方独立行；④ 删除「当前安全配置为开放模式，生产环境建议启用加密」警告标签及其 `UpdateSecurityWarning` 逻辑；⑤ 右侧空余区新增「已连接客户端」列表（`GroupBox` + `ListBox`），由 UA 服务器 `GetConnectedClients()`（经 `IServerInternal.SessionManager.GetSessions()` 读取活动会话的 `SessionDiagnostics.SessionName` / `ClientDescription.ApplicationName` / `ApplicationUri`）借 `RefreshStats` 定时器定期刷新、停止时清空；`OPC UA 服务器设置` 分组高度 130→150；编译 0 警告 0 错误 ✅ |
+| 1.7.0 (时间戳同源统一) | 2026-07-15 | **修复 UA 客户端与网关监控时间戳不一致（版本号保持 1.7.0 不变）**：原 `DataBridge` 将 DA 源戳 `value.Timestamp.LocalDateTime` 传给 UA、`UpdateValue` 内算 `max(DA源戳UTC, 网关UTC, last+1tick)`，而监控快照另取 `DateTime.UtcNow`，两侧时间戳基准不同源（DA 源戳冻结或时钟偏差时系统性错位）；改为 `OnDaDataChanged` 内统一取网关接收时刻 `recvUtc`（UTC）同源传给 UA 与本地快照，`UpdateValue` 简化为 `ts = max(srcUtc, lastTs+1tick)`，保证 UA SourceTimestamp 与监控快照时间戳严格同源、代表同一瞬间；值差异经确认属 OPC UA 订阅正常延迟（UA 客户端按自身 `PublishingInterval`/`SamplingInterval` 收值，滞后最多一个发布周期），非网关缺陷，建议在 UA 客户端调小发布间隔收敛；编译 0 警告 0 错误 ✅ |
+| 1.7.0 (运行时修复) | 2026-07-15 | **三个运行时缺陷修复（版本号保持 1.7.0 不变）**：① **浏览点位 BeginInvoke 句柄异常**：`ItemSelectionDialog` 后台线程在对话框窗口句柄创建前裸调 `BeginInvoke` 抛 `InvalidOperationException`，新增 `SafeBeginInvoke`（句柄未就绪时订阅 `HandleCreated` 延后执行，与 `MainForm.SafeInvoke` 防护范式一致）替换三处裸调用；② **监控时间戳显示错误**：标签数据监控「时间戳」列直接显示 UTC 的 `TagSnapshot.Timestamp`，北京用户(UTC+8)看到的时间慢 8 小时，改为显示层 `ToLocalTime()` 转换（数据模型仍保持 UTC 以保证 UA SourceTimestamp 规范）；③ **UA 客户端质量大量 Bad**：`OpcDaClient` 质量判定误用操作结果 `value.Error.Succeeded`，应改用数据质量位 `value.Quality.Status & 0xC0 == 0xC0`（OPC DA 规范，高 2 位 0xC0=Good），并移除因操作结果误丢有效数据的硬跳过，新增 `IsQualityGood(OpcDaQuality)` 公共方法（异步 `OnValuesChanged` / 定时 `DoSyncRead` 两处回调同步修正）；编译 0 警告 0 错误 ✅ |
+| 1.7.0 | 2026-07-13 | **定稿发布**：整合 V1.6.0~V1.6.3 全部变更，并移除 V1.6.2 临时诊断日志（`[诊断-DA]`/`[诊断-bool]`）；三个项目版本号统一升至 1.7.0；编译 0 警告 0 错误 ✅ |
+| 1.7.0+ | 2026-07-13 | **UI 排版微调**：`AppConstants.WindowTitle` 由 `"OPC DA → OPC UA 网关 v" + AppVersion` 改为 `"OPC DA → OPC UA 网关"`（去掉版本号）；`MainForm.cs` 数据获取下拉（`lblDaMode`/`_cmbDaMode`）从 y=100/96 上移至 y=70/66，与「获取点位」按钮（y=65）对齐到同一行 |
+| 1.6.3 | 2026-07-13 | **翻转标签数值/时间戳不更新（根因修复）**：根因为 OPC DA 服务器给 bool 标签打出的源时间戳长期冻结（实测约 8-9 分钟才变化一次），而数值本身在快速翻转。`GatewayNodeManager.UpdateValue` 将单调时间戳下限由 `last+1 tick` 改为**网关当前 UTC 时钟**（取 max(DA源戳, 网关UTC, last+1tick)），冻结戳下时间戳按真实时间推进，OPC UA 变化检测每轮都触发；`DataBridge` 快照时间戳改用网关接收时刻(UTC)，消除 UI「数值在动、时间戳冻结」误导显示 |
+| 1.6.2 | 2026-07-13 | **bool 冻结排查（临时诊断）**：新增一次性丢弃诊断（`[诊断-DA]`）与 bool 到达诊断（`[诊断-bool]`），并鲁棒化 Boolean 类型转换（`short`/`int`/`string` 兜底）。**该版本诊断日志已在 V1.7.0 移除** |
+| 1.6.1 | 2026-07-13 | **翻转标签时间戳去重修复（初版）**：`UpdateValue` 将 DA 源时间戳原样当作 UA SourceTimestamp 改为网关时钟生成的严格单调递增 UTC 时间戳，修复 DA 源戳重复/非单调被 OPC UA 按(值,状态,源时间戳)去重、导致翻转标签卡住的问题（初版力度不足，V1.6.3 强化） |
+| 1.6.0 | 2026-07-13 | **新增 OPC DA 同步/异步获取模式**：`OpcDaConfig.Mode`/`GetEffectiveMode()` + UI「数据获取」下拉（`Async`/`Sync`，默认 `Async`）；`OpcDaClient.Start(updateRateMs, mode)` 按模式分支——Async 维持订阅+5分钟兜底，Sync 按 `UpdateRateMs` 定时 `group.Read` 轮询；`TryReconnect` 复用模式 |
 | 1.5.0 | 2026-07-04 | **ponytail 代码优化（8项）**：
 **R1** 删除 `Services/GateController.cs`（~150 行），其 5 个事件均为 `=> OtherEvent?.Invoke(...)` 透传，无业务逻辑；MainForm 直接订阅 `_gatewayMgr` / `_watchdogMgr` 事件；GatewayManager 新增 `RunningStateChanged` 事件；
 **R2** 新建 `Services/LicenseManager.cs`，封装授权码验证 / Stopwatch 试用期计时 / 状态事件通知；MainForm 删除 `_isLicensed` / `_pcid` / `_licenseTimer` / `_trialStopwatch` / `_trialExpired` 五个字段，UI 通过事件回调更新状态栏；

@@ -318,24 +318,47 @@ namespace OpcDaToUaGateway
                         // 所有诊断消息写入文件日志，方便离线排查
                         _logger?.Invoke($"[Browse] {msg}");
                         // UI 线程上更新状态标签（只显示关键信息，避免刷屏）
-                        BeginInvoke((Action)(() =>
+                        SafeBeginInvoke(() =>
                         {
                             if (msg.Contains("尝试连接") || msg.Contains("连接成功") ||
                                 msg.Contains("浏览完成") || msg.Contains("失败"))
                             {
                                 _lblStatus.Text = msg.Replace("[Browse] ", "");
                             }
-                        }));
+                        });
                     });
 
-                    BeginInvoke((Action)(() => OnBrowseComplete(items)));
+                    SafeBeginInvoke(() => OnBrowseComplete(items));
                 }
                 catch (Exception ex)
                 {
                     _logger?.Invoke($"[Browse] 异常: {ex.Message}");
-                    BeginInvoke((Action)(() => OnBrowseFailed(ex)));
+                    SafeBeginInvoke(() => OnBrowseFailed(ex));
                 }
             });
+        }
+
+        /// <summary>
+        /// 线程安全的异步 UI 封送。后台线程通过 Task.Run 调用 BrowseAllItems 时，
+        /// 首条日志可能在对话框窗口句柄创建前触发，此时裸调 BeginInvoke 会抛
+        /// "在创建窗口句柄之前，不能在控件上调用 Invoke 或 BeginInvoke"。
+        /// 此处与 MainForm.SafeInvoke 保持一致：句柄未就绪时订阅 HandleCreated，
+        /// 待 UI 线程创建句柄后再执行，确保回调不丢且不崩溃。
+        /// </summary>
+        private void SafeBeginInvoke(Action a)
+        {
+            if (IsDisposed) return;
+            if (IsHandleCreated)
+            {
+                BeginInvoke(a);
+                return;
+            }
+            HandleCreated += OnHandleReady;
+            void OnHandleReady(object sender, EventArgs e)
+            {
+                HandleCreated -= OnHandleReady;
+                if (!IsDisposed) BeginInvoke(a);
+            }
         }
 
         private void OnBrowseComplete(List<OpcDaItemInfo> items)

@@ -1,7 +1,7 @@
-# OPC_DA转UA网关 — 项目状态报告
+﻿# OPC_DA转UA网关 — 项目状态报告
 
-**生成时间：** 2026-07-04 21:46  
-**当前版本：** 1.5.0  
+**生成时间：** 2026-07-17 17:20  
+**当前版本：** V1.9.0  
 **编译状态：** 0 警告 0 错误 ✅
 
 ---
@@ -11,6 +11,19 @@
 对 OpcDaToUaGateway 项目进行代码瘦身与结构优化（ponytail 8 项），消除过度工程、冗余代码，提升可维护性。
 
 **状态：全部执行完毕，编译通过，版本号已升级到 1.5.0。**
+
+> **版本演进（自 V1.5.0 起，详见 handoff.md / 开发指南版本历史）：**
+> - **V1.5.1**（本会话）：修复 `RunningStateChanged` 跨线程异常（`SafeInvoke` 封送缺失）、`SafeInvoke` 缺句柄防护、删除 `LicenseManager` 死代码 `_requestGatewayStop`；编译 0 警告 0 错误。
+> - **V1.6.0**：新增 OPC DA 同步/异步获取模式（`OpcDaConfig.Mode` + UI「数据获取」下拉 + `OpcDaClient.Start(mode)` 按模式分支）。
+> - **V1.6.1–V1.6.3**：修复频繁翻转 bool 标签数值/时间戳不更新——根因为 OPC DA 服务器给 bool 标签打出的源时间戳长期冻结；`UpdateValue` 单调时间戳下限改为网关 UTC 时钟，快照时间戳改用网关接收时刻。
+> - **V1.7.0**：定稿发布，移除 V1.6.2 临时诊断日志；三个项目版本号统一 1.7.0。
+> - **V1.7.0+（UI微调）**：`AppConstants.WindowTitle` 去掉版本号（"OPC DA → OPC UA 网关 v" + AppVersion → "OPC DA → OPC UA 网关"）；`MainForm.cs` 数据获取下拉与「获取点位」按钮对齐到同一行。
+> - **V1.7.0（运行时修复，2026-07-15）**：版本号保持 1.7.0 不变，修复三个运行时缺陷——① `ItemSelectionDialog` 浏览点位 `BeginInvoke` 句柄未创建异常（新增 `SafeBeginInvoke`，句柄未就绪时订阅 `HandleCreated` 延后执行）；② 标签监控「时间戳」列 UTC 直接显示导致北京用户慢 8 小时（显示层 `ToLocalTime()` 转换，数据模型保持 UTC）；③ `OpcDaClient` 质量判定误用操作结果 `value.Error.Succeeded` 致 UA 客户端大量质量 Bad（改为 `value.Quality.Status & 0xC0 == 0xC0` 质量位判定，移除误丢有效数据的硬跳过，新增 `IsQualityGood`）；编译 0 警告 0 错误。
+> - **V1.7.0（时间戳同源统一，2026-07-15）**：版本号保持 1.7.0 不变，修复 UA 客户端与网关监控时间戳不一致——原 `DataBridge` 将 DA 源戳传给 UA、监控快照另取 `DateTime.UtcNow`，两侧基准不同源（DA 源戳冻结/时钟偏差时系统性错位）；改为 `OnDaDataChanged` 内统一取网关接收时刻 `recvUtc`（UTC）同源传给 UA 与本地快照，`UpdateValue` 简化为 `ts = max(srcUtc, lastTs+1tick)`，两侧严格同源；值差异经确认属 OPC UA 订阅正常延迟（UA 客户端按自身 `PublishingInterval`/`SamplingInterval` 收值），非网关缺陷，建议在 UA 客户端调小发布间隔；编译 0 警告 0 错误。
+> - **V1.7.0（UA 设置区 UI 调整，2026-07-15）**：版本号保持 1.7.0 不变，调整「OPC UA 服务器设置」区——监听地址与安全模式下拉框宽度统一为 140；标签「端口」→「端口号」、「最大会话数」→「连接数」且二者左对齐；「自动接受客户端证书」移至安全模式下方独立行；删除「当前安全配置为开放模式，生产环境建议启用加密」警告标签及 `UpdateSecurityWarning` 逻辑；右侧空余区新增「已连接客户端」列表（`GetConnectedClients()` 经 `IServerInternal.SessionManager.GetSessions()` 读取活动会话名称，定期刷新、停止时清空）；分组高度 130→150；编译 0 警告 0 错误。
+> - **V1.8.0（2026-07-16）**：升级版本号至 1.8.0（三个 `.csproj` 统一）。移除 V1.7.0 新增的「已连接客户端」列表功能——删除 `MainForm` 客户端列表控件与 `RefreshConnectedClients()` 定时刷新逻辑、`GatewayOpcUaServer.GetConnectedClients()` 及 `GatewayServer.ServerInternalAccess` 属性、`IGatewayOpcUaServer.GetConnectedClients()` 接口声明；OPC UA 设置区布局恢复紧凑。**启动卡顿修复：** 启动网关后窗口「未响应」已定位并修复。根因为 `GatewayNodeManager.AddVariableNode` 在每次创建变量节点时调用 `Diag()`，经 `OnStatusChanged`→`_log.Append`→`BeginInvoke` 向 UI 线程投递数万次日志更新（`LogManager.UpdateTextBox` 每次 O(文本长度)、累计 O(n²)），3.5 万节点场景导致约 7 分钟卡死；该 `Diag` 路径独立于 `DataBridge` 已节流的 `Log`，此前排查时未被覆盖。已移除该逐节点诊断调用，节点创建仍走 O(1) 的 `AddPredefinedNode`（经反编译 `Opc.Ua.Server.dll` 1.5.378.145 确认其仅做 `PredefinedNodes` 字典注册，无逐节点通知/地址空间重建）；`DataBridge.Start()` 进度日志维持每 ~5% 节流。编译 0 警告 0 错误。
+
+- **V1.9.0（2026-07-17）**：升级版本号至 V1.9.0（三个 `.csproj` 统一）。**启动卡顿最终修复**：V1.8.0 移除了逐节点 `Diag` 消除了 O(n²) 日志洪泛，但 3.5 万次 `AddVariableNode` 仍在 UI 线程同步执行，累积耗时数秒导致窗口"未响应"。改为 `DataBridge.StartAsync(Action<string>)` 使用 `Task.Run` 将节点创建循环移至后台线程，通过 `SynchronizationContext.Post` 将进度日志安全投递到 UI 线程输出到日志框。UI 线程在启动过程中始终保持响应。编译 0 警告 0 错误。
 
 ---
 
@@ -59,8 +72,8 @@
 
 | 文件 | 原因 |
 |---|---|
-| GatewayOpcUaServer.cs | OPC UA 服务器核心逻辑，修改风险极高 |
-| OpcDaClient.cs | OPC DA COM 客户端，线程安全和生命周期管理敏感 |
+| GatewayOpcUaServer.cs | OPC UA 服务器核心逻辑，修改风险极高（V1.6.3 仅在 `UpdateValue` 内调整 SourceTimestamp 生成策略，未触及节点/订阅核心） |
+| OpcDaClient.cs | OPC DA COM 客户端，线程安全和生命周期管理敏感（V1.6.0 仅在 `Start` 内按模式分支、V1.6.2 临时诊断，均为外科手术式改动，未触动 COM 连接/释放时序） |
 | ConfigManager.cs | 配置管理，未纳入优化范围 |
 | Services/WatchdogManager.cs | 看门狗进程管理，仅通过事件交互 |
 | Models/LicenseAlgorithm.cs | 授权算法（PCID + HMAC），修改导致已授权用户失效 |
@@ -100,11 +113,11 @@
 
 | 风险 | 等级 | 说明 |
 |---|---|---|
-| 事件订阅泄漏 | 🟡 中 | MainForm 直连订阅，OnFormClosing 需确认取消订阅 |
-| SafeInvoke 使用 `Invoke` 而非 `BeginInvoke` | 🟡 中 | 与原 `LogManager` 不一致，特定场景可能死锁 |
-| LicenseManager 试用到期处理 | 🟡 中 | `Close()` 需在 UI 线程执行，当前通过 `SafeInvoke` 包装 |
-| 未运行时测试 | 🔴 高 | OPC DA 实际环境未验证事件转发链 |
-| [Conditional("DEBUG")] 排障信息丢失 | 🟡 中 | Release 模式无地址空间初始化详情 |
+| 事件订阅泄漏 / 跨线程异常 | ✅ 已解决(V1.5.1) | `RunningStateChanged` 补 `SafeInvoke` 封送；`SafeInvoke` 增加 `IsDisposed/IsHandleCreated` 防护 |
+| SafeInvoke 死锁 | ✅ 已缓解 | 保持 `Invoke`（与 `LogManager` 一致），增加句柄防护规避关闭期 `ObjectDisposedException` |
+| 频繁翻转 bool 标签不更新 | ✅ 已解决(V1.6.3) | `UpdateValue` 单调时间戳下限改为网关 UTC 时钟；快照时间戳改用网关接收时刻 |
+| 未运行时测试 | 🔴 高 | OPC DA 实际环境仍待验证（沙箱无 DA 服务器）；逻辑已静态核对，编译 0 警告 0 错误 |
+| [Conditional("DEBUG")] 排障信息丢失 | 🟡 中（设计取舍） | R7 有意为之，Release 模式移除诊断日志 |
 
 ---
 

@@ -23,13 +23,13 @@ namespace OpcDaToUaGateway
         // ---- UI 控件 ----
         private Label _lblCurrentServer;
         private TextBox _txtProgId;
+        private ComboBox _cmbDaMode;
         private Button _btnBrowse;
         private Button _btnFetchTags;
         private ComboBox _cmbListenAddress;
         private NumericUpDown _nudUaPort;
         private ComboBox _cmbSecurityMode;
         private CheckBox _chkAutoAcceptCerts;
-        private Label _lblSecurityWarning; // M7 修复：安全警告标签
         private NumericUpDown _nudMaxSessions;
         private Label _lblEndpointUrl;
         private Button _btnStart;
@@ -113,12 +113,13 @@ namespace OpcDaToUaGateway
             {
                 Text = "OPC DA 服务器设置",
                 Location = new Point(10, y),
-                Size = new Size(920, 110),
+                Size = new Size(920, 130),
                 BackColor = Theme.Surface
             };
 
             var lblPrompt = new Label { Text = "服务器 ProgId:", Location = new Point(15, 30), AutoSize = true };
             _txtProgId = new TextBox { Location = new Point(110, 27), Size = new Size(420, 25) };
+            _txtProgId.TextChanged += (s, ev) => UpdateDaButtonsState();
 
             _btnBrowse = new Button
             {
@@ -134,7 +135,7 @@ namespace OpcDaToUaGateway
             {
                 Text = "获取点位...", Location = new Point(110, 65), Size = new Size(110, 30),
                 FlatStyle = FlatStyle.Flat, BackColor = Theme.Primary, ForeColor = Color.White,
-                Cursor = Cursors.Hand
+                Cursor = Cursors.Hand, Enabled = false  // V1.9.0: 未选择服务器时禁用
             };
             _btnFetchTags.FlatAppearance.BorderSize = 0;
             _btnFetchTags.Click += BtnFetchTags_Click;
@@ -145,23 +146,42 @@ namespace OpcDaToUaGateway
                 Location = new Point(230, 72), AutoSize = true, ForeColor = Color.Gray
             };
 
-            grpServer.Controls.AddRange(new Control[] { lblPrompt, _txtProgId, _btnBrowse, _lblCurrentServer, _btnFetchTags, lblFetchHint });
+            // 数据获取方式：异步订阅（服务器主动推送）/ 同步轮询（网关定时主动读取）
+            // 与「获取点位」按钮同行对齐（y ≈ 65-70）
+            var lblDaMode = new Label { Text = "数据获取:", Location = new Point(540, 70), AutoSize = true, ForeColor = Color.Gray };
+            _cmbDaMode = new ComboBox
+            {
+                Location = new Point(610, 66), Size = new Size(150, 25), DropDownStyle = ComboBoxStyle.DropDownList
+            };
+            _cmbDaMode.Items.AddRange(new object[] { "异步订阅", "同步轮询" });
+            _cmbDaMode.SelectedIndex = 0;
+            _cmbDaMode.SelectedIndexChanged += (s, ev) =>
+            {
+                if (!_isLoadingConfig && Config != null)
+                {
+                    Config.OpcDa.Mode = _cmbDaMode.SelectedIndex == 1 ? "Sync" : "Async";
+                    _configMgr.Save();
+                }
+            };
+
+            grpServer.Controls.AddRange(new Control[] { lblPrompt, _txtProgId, _btnBrowse, _lblCurrentServer, _btnFetchTags, lblFetchHint, lblDaMode, _cmbDaMode });
             Controls.Add(grpServer);
-            y += 120;
+            y += 140;
 
             // ---- 区域 2：OPC UA 服务器设置 ----
             var grpUaSettings = new GroupBox
             {
                 Text = "OPC UA 服务器设置",
                 Location = new Point(10, y),
-                Size = new Size(920, 130),
+                Size = new Size(920, 150),
                 BackColor = Theme.Surface
             };
 
+            // 第 1 行：监听地址、端口号
             var lblListen = new Label { Text = "监听地址:", Location = new Point(15, 28), AutoSize = true };
             _cmbListenAddress = new ComboBox
             {
-                Location = new Point(85, 25), Size = new Size(120, 25), DropDownStyle = ComboBoxStyle.DropDownList
+                Location = new Point(85, 25), Size = new Size(140, 25), DropDownStyle = ComboBoxStyle.DropDownList
             };
             _cmbListenAddress.Items.AddRange(new object[] { "localhost", "0.0.0.0" });
             _cmbListenAddress.SelectedIndex = 0;
@@ -175,10 +195,10 @@ namespace OpcDaToUaGateway
                 }
             };
 
-            var lblPort = new Label { Text = "端口:", Location = new Point(220, 28), AutoSize = true };
+            var lblPort = new Label { Text = "端口号:", Location = new Point(250, 28), AutoSize = true };
             _nudUaPort = new NumericUpDown
             {
-                Location = new Point(260, 25), Size = new Size(70, 25), Minimum = 1024, Maximum = 65535, Value = 4840
+                Location = new Point(310, 25), Size = new Size(70, 25), Minimum = 1024, Maximum = 65535, Value = 4840
             };
             _nudUaPort.ValueChanged += (s, ev) =>
             {
@@ -192,10 +212,11 @@ namespace OpcDaToUaGateway
 
             _lblEndpointUrl = new Label
             {
-                Text = "", Location = new Point(345, 28), AutoSize = true,
+                Text = "", Location = new Point(15, 120), AutoSize = true,
                 ForeColor = Color.DodgerBlue, Font = new Font("Consolas", 9f)
             };
 
+            // 第 2 行：安全模式、连接数（端口号与连接数左对齐）
             var lblSecMode = new Label { Text = "安全模式:", Location = new Point(15, 62), AutoSize = true };
             _cmbSecurityMode = new ComboBox
             {
@@ -209,28 +230,14 @@ namespace OpcDaToUaGateway
                 {
                     Config.OpcUa.SecurityMode = _cmbSecurityMode.SelectedItem.ToString();
                     _configMgr.Save();
-                    UpdateSecurityWarning(); // M7
+                    // 安全警告标签已于 2026-07-15 移除，此处不再调用 UpdateSecurityWarning
                 }
             };
 
-            _chkAutoAcceptCerts = new CheckBox
-            {
-                Text = "自动接受客户端证书", Location = new Point(245, 62), AutoSize = true, Checked = true
-            };
-            _chkAutoAcceptCerts.CheckedChanged += (s, ev) =>
-            {
-                if (!_isLoadingConfig && Config != null)
-                {
-                    Config.OpcUa.AutoAcceptCertificates = _chkAutoAcceptCerts.Checked;
-                    _configMgr.Save();
-                    UpdateSecurityWarning(); // M7
-                }
-            };
-
-            var lblMaxSess = new Label { Text = "最大会话数:", Location = new Point(410, 62), AutoSize = true };
+            var lblMaxSess = new Label { Text = "连接数:", Location = new Point(250, 62), AutoSize = true };
             _nudMaxSessions = new NumericUpDown
             {
-                Location = new Point(490, 59), Size = new Size(60, 25), Minimum = 1, Maximum = 500, Value = 50
+                Location = new Point(310, 59), Size = new Size(70, 25), Minimum = 1, Maximum = 500, Value = 50
             };
             _nudMaxSessions.ValueChanged += (s, ev) =>
             {
@@ -241,21 +248,27 @@ namespace OpcDaToUaGateway
                 }
             };
 
-            // M7 修复：安全警告标签（当安全模式为 None 或自动接受证书时显示，独立第三行）
-            _lblSecurityWarning = new Label
+            // 第 3 行：自动接受客户端证书（置于「安全模式」下方的独立行，2026-07-15 调整）
+            _chkAutoAcceptCerts = new CheckBox
             {
-                Text = "⚠ 当前安全配置为开放模式，生产环境建议启用加密",
-                Location = new Point(15, 95), AutoSize = true,
-                ForeColor = Color.Red, Visible = false
+                Text = "自动接受客户端证书", Location = new Point(15, 95), AutoSize = true, Checked = true
+            };
+            _chkAutoAcceptCerts.CheckedChanged += (s, ev) =>
+            {
+                if (!_isLoadingConfig && Config != null)
+                {
+                    Config.OpcUa.AutoAcceptCertificates = _chkAutoAcceptCerts.Checked;
+                    _configMgr.Save();
+                }
             };
 
             grpUaSettings.Controls.AddRange(new Control[] {
                 lblListen, _cmbListenAddress, lblPort, _nudUaPort, _lblEndpointUrl,
-                lblSecMode, _cmbSecurityMode, _chkAutoAcceptCerts, lblMaxSess, _nudMaxSessions,
-                _lblSecurityWarning
+                lblSecMode, _cmbSecurityMode, lblMaxSess, _nudMaxSessions,
+                _chkAutoAcceptCerts
             });
             Controls.Add(grpUaSettings);
-            y += 140;
+            y += 160;
 
             // ---- 区域 3：控制面板 ----
             var grpControl = new GroupBox
@@ -500,22 +513,6 @@ namespace OpcDaToUaGateway
         {
             if (Config?.OpcUa == null) return;
             _lblEndpointUrl.Text = Config.OpcUa.GetEndpointUrl();
-            UpdateSecurityWarning(); // M7 修复：同步更新安全警告
-        }
-
-        /// <summary>
-        /// M7 修复：根据当前安全配置更新警告标签可见性
-        /// </summary>
-        private void UpdateSecurityWarning()
-        {
-            if (Config?.OpcUa == null || _lblSecurityWarning == null) return;
-
-            bool isInsecure =
-                string.IsNullOrEmpty(Config.OpcUa.SecurityMode) ||
-                Config.OpcUa.SecurityMode.Equals("None", StringComparison.OrdinalIgnoreCase) ||
-                Config.OpcUa.AutoAcceptCertificates;
-
-            _lblSecurityWarning.Visible = isInsecure;
         }
 
         private void SetUaSettingsEnabled(bool enabled)
@@ -540,6 +537,11 @@ namespace OpcDaToUaGateway
             _btnExportTags.Enabled = true; // 导出在运行中也可用，启动失败和停止后也恢复
             _txtProgId.ReadOnly = isRunning;
             SetUaSettingsEnabled(!isRunning);
+            // V1.9.0: 网关停止后，根据 ProgId 是否非空重新校准按钮状态
+            if (!isRunning)
+            {
+                UpdateDaButtonsState();
+            }
         }
 
         /// <summary>
@@ -578,6 +580,17 @@ namespace OpcDaToUaGateway
             _dgvTags.Invalidate();
         }
 
+        /// <summary>
+        /// N-10: 根据当前 ProgId 是否非空，统一控制「获取点位」「启动网关」按钮的可用状态。
+        /// 未选择 OPC DA 服务器时，这两个按钮不可操作。
+        /// </summary>
+        private void UpdateDaButtonsState()
+        {
+            bool hasServer = !string.IsNullOrEmpty(_txtProgId?.Text?.Trim());
+            _btnFetchTags.Enabled = hasServer;
+            _btnStart.Enabled = hasServer;
+        }
+
         // ================================================================
         //  服务器选择 & 点位获取
         // ================================================================
@@ -596,6 +609,8 @@ namespace OpcDaToUaGateway
                         _lblCurrentServer.ForeColor = Color.DarkGreen;
                     }
                     _configMgr.SaveProgId(dialog.SelectedProgId);
+                    // V1.9.0: 选择服务器后启用「获取点位」「启动网关」
+                    UpdateDaButtonsState();
                 }
             }
         }
@@ -688,6 +703,7 @@ namespace OpcDaToUaGateway
             _log.CleanupOldFiles();
             _log.Append($"  OPC DA 服务器: {Config.OpcDa.ServerProgId}");
             _log.Append($"  刷新频率: {Config.OpcDa.UpdateRateMs} ms");
+            _log.Append($"  数据获取: {Config.OpcDa.GetEffectiveMode()}");
             _log.Append($"  标签数量: {Config.OpcDa.Tags?.Count ?? 0}");
             _log.Append($"  OPC UA 端口: {Config.OpcUa.Port}");
             _log.Append($"  OPC UA 监听: {Config.OpcUa.GetEffectiveListenAddress()}");
@@ -701,6 +717,7 @@ namespace OpcDaToUaGateway
 
             // 加载自动选项的复选框状态（用标志位防止触发保存）
             _isLoadingConfig = true;
+            _cmbDaMode.SelectedItem = Config.OpcDa.GetEffectiveMode() == DaAcquisitionMode.Sync ? "同步轮询" : "异步订阅";
             _chkAutoConnectDa.Checked = Config.AutoConnectDa;
             _chkAutoStartUa.Checked = Config.AutoStartUa;
             _chkAutoStartWin.Checked = Config.AutoStartWithWindows;
@@ -775,7 +792,9 @@ namespace OpcDaToUaGateway
 
             _gatewayMgr.RunningStateChanged += (isRunning) =>
             {
-                SetUiRunningState(isRunning);
+                // P2 修复：该事件由 GatewayManager 后台线程（StartAsync 经 ConfigureAwait(false) 后的延续）
+                // 触发，直接操作控件会抛 Cross-thread 异常。统一经 SafeInvoke 封送回 UI 线程。
+                SafeInvoke(() => SetUiRunningState(isRunning));
             };
 
             // 恢复上次连接的 ProgId
@@ -785,6 +804,9 @@ namespace OpcDaToUaGateway
                 _lblCurrentServer.Text = "(上次连接)";
                 _lblCurrentServer.ForeColor = Color.DarkGreen;
             }
+
+            // V1.9.0: 配置加载后，根据 ProgId 是否非空启用按钮
+            UpdateDaButtonsState();
 
             if (Config.OpcDa.Tags != null)
                 UpdateTagGrid(Config.OpcDa.Tags);
@@ -815,7 +837,7 @@ namespace OpcDaToUaGateway
             }
 
             // 初始化授权管理器
-            _licenseMgr = new LicenseManager(_log, _configMgr, null);
+            _licenseMgr = new LicenseManager(_log, _configMgr, () => { });
             _licenseMgr.StatusChanged += (text, color) =>
             {
                 SafeInvoke(() => { _lblLicenseStatus.Text = text; _lblLicenseStatus.ForeColor = color; });
@@ -882,8 +904,20 @@ namespace OpcDaToUaGateway
                 _log.Append("========================================");
                 _log.Append("正在启动网关...");
 
+                // V1.8.1: 进度回调 — 通过 SynchronizationContext.Post 将进度报告安全地投递到 UI 线程，
+                // 确保日志框实时更新而不会阻塞 UI。
+                var syncCtx = System.Threading.SynchronizationContext.Current;
+                Action<string> report = null;
+                report = msg =>
+                {
+                    if (syncCtx != null)
+                        syncCtx.Post(_ => _log.Append(msg), null);
+                    else
+                        _log.Append(msg);
+                };
+
                 // 启动网关
-                await _gatewayMgr.StartAsync();
+                await _gatewayMgr.StartAsync(report);
 
                 Config.LastConnectedProgId = progId;
                 _configMgr.Save();
@@ -1107,7 +1141,7 @@ namespace OpcDaToUaGateway
                         {
                             case 2: e.Value = snap.Value; break;
                             case 3: e.Value = snap.Quality; break;
-                            case 4: e.Value = snap.Timestamp.ToString("HH:mm:ss.fff"); break;
+                            case 4: e.Value = snap.Timestamp.ToLocalTime().ToString("HH:mm:ss.fff"); break;
                         }
                     }
                     else
@@ -1231,7 +1265,7 @@ namespace OpcDaToUaGateway
             _notifyIcon?.Dispose();
             _licenseMgr?.Dispose();
             try { _healthSnapshot?.Dispose(); } catch { } // H-36
-            try { _configMgr?.StopWatching(); } catch { } // H-40
+            try { _configMgr?.Dispose(); } catch { } // H-40 + V1.9.0: ConfigManager 现实现 IDisposable
             base.OnFormClosing(e);
         }
 
@@ -1241,9 +1275,13 @@ namespace OpcDaToUaGateway
 
         /// <summary>
         /// 线程安全地执行 UI 操作。
+        /// 增加句柄防护：窗体未创建句柄或已释放时直接跳过，避免关闭/初始化期间
+        /// 后台事件（如 HealthSnapshot 定时器、LicenseManager 试用到期）触发 Invoke 抛
+        /// ObjectDisposedException 或跨线程异常。
         /// </summary>
         private void SafeInvoke(Action a)
         {
+            if (IsDisposed || !IsHandleCreated) return;
             if (InvokeRequired) Invoke(a); else a();
         }
 

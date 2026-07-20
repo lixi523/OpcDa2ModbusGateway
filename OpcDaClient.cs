@@ -104,7 +104,13 @@ namespace OpcDaToUaGateway
         /// 如果连接过程中任何步骤失败，会自动调用 Cleanup() 释放已创建的资源并重新抛出异常。
         /// </summary>
         /// <param name="updateRateMs">订阅组的刷新率（毫秒），OPC DA 服务器按此周期推送数据变化。</param>
-        public void Start(int updateRateMs)
+        /// <summary>
+        /// 启动 OPC DA 客户端：连接服务器、创建订阅、按指定数据获取方式注册回调或启动轮询。
+        /// 如果连接过程中任何步骤失败，会自动调用 Cleanup() 释放已创建的资源并重新抛出异常。
+        /// </summary>
+        /// <param name="updateRateMs">刷新频率（毫秒），异步模式作为订阅推送周期、同步模式作为轮询周期。</param>
+        /// <param name="mode">数据获取方式（异步订阅 / 同步轮询）。</param>
+        public void Start(int updateRateMs, DaAcquisitionMode mode)
         {
             try
             {
@@ -114,7 +120,7 @@ namespace OpcDaToUaGateway
                 OnStatusChanged?.Invoke($"  URL: {uri}");
 
                 // 创建 COM 服务器代理并建立连接。
-                // Connect() 内部调用 COM 的 CoCreateInstance 创建远程/本地 OPC DA 服务器实例。
+                // Connect() 内部调用 COM 的 CoCreateInstance 创建远程/本地 OPC DA 服务器实例
                 _server = new OpcDaServer(uri);
                 _server.Connect();
                 OnStatusChanged?.Invoke($"  已连接到 OPC DA 服务器: {_serverProgId}");
@@ -128,15 +134,23 @@ namespace OpcDaToUaGateway
                 // 将配置的标签点位添加到订阅组中。
                 AddAllItems();
 
-                // 注册异步数据变化回调。
-                _group.ValuesChanged += OnValuesChanged;
+                if (mode == DaAcquisitionMode.Async)
+                {
+                    // 异步订阅：注册数据变化回调，由 OPC DA 服务器主动推送。
+                    _group.ValuesChanged += OnValuesChanged;
+                    _group.IsSubscribed = true;
 
-                // 显式启用订阅推送（IOPCAsyncIO2.Enable = true）。
-                _group.IsSubscribed = true;
-
-                // 启动 5 分钟定时同步读取作为异步订阅的兜底保障。
-                _readTimer = new Timer(_ => DoSyncRead(), null, AppConstants.DaSyncIntervalMs, AppConstants.DaSyncIntervalMs);
-                OnStatusChanged?.Invoke($"  定时同步已启动, 间隔: {AppConstants.DaSyncIntervalMs / 60000} 分钟");
+                    // 5 分钟定时同步读取作为异步订阅的兜底保障（防止回调丢失）。
+                    _readTimer = new Timer(_ => DoSyncRead(), null, AppConstants.DaSyncIntervalMs, AppConstants.DaSyncIntervalMs);
+                    OnStatusChanged?.Invoke($"  异步订阅已启用（回调推送 + {AppConstants.DaSyncIntervalMs / 60000} 分钟同步兜底）");
+                }
+                else
+                {
+                    // 同步轮询：不依赖服务器回调，由网关按刷新频率定时主动读取。
+                    _group.IsSubscribed = false;
+                    _readTimer = new Timer(_ => DoSyncRead(), null, updateRateMs, updateRateMs);
+                    OnStatusChanged?.Invoke($"  同步轮询已启用, 轮询间隔: {updateRateMs}ms");
+                }
 
                 _isConnected = true;
                 OnStatusChanged?.Invoke($"已连接 OPC DA 服务器: {_serverProgId}");
@@ -148,6 +162,15 @@ namespace OpcDaToUaGateway
                 OnStatusChanged?.Invoke($"连接失败: {ex.Message}");
                 throw;
             }
+        }
+
+        /// <summary>
+        /// 启动 OPC DA 客户端（默认异步订阅模式）。
+        /// </summary>
+        /// <param name="updateRateMs">刷新频率（毫秒），OPC DA 服务器推送数据变化的频率。</param>
+        public void Start(int updateRateMs)
+        {
+            Start(updateRateMs, DaAcquisitionMode.Async);
         }
 
         /// <summary>
@@ -434,6 +457,10 @@ namespace OpcDaToUaGateway
         {
             lock (_lifecycleLock)
             {
+                // V1.9.0 修复：在重连前检查 _disposedInt，防止 Dispose 后仍在排队的回调
+                //       访问已释放的 _group/_server，导致 ObjectDisposedException 或竞态崩溃。
+                if (Volatile.Read(ref _disposedInt) == 1) return false;
+
                 try
                 {
                     OnStatusChanged?.Invoke("[看门狗] 正在尝试重新连接 OPC DA...");

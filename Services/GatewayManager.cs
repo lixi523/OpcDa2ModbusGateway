@@ -131,9 +131,12 @@ namespace OpcDaToUaGateway.Services
         ///
         /// 如果网关已在运行或正在启动中，方法立即返回（幂等）。
         /// 任何步骤失败时，已创建的资源按逆序回滚，然后重新抛出异常。
+        /// 
+        /// <param name="progressReport">可选进度回调，用于报告节点创建等耗时操作的进度文本。
+        /// 调用方需保证此回调线程安全（MainForm 已通过 SynchronizationContext.Post 保证）。</param>
         /// </summary>
         /// <returns>异步任务，在所有步骤完成后结束</returns>
-        public async Task StartAsync()
+        public async Task StartAsync(Action<string> progressReport = null)
         {
             // 在锁内做 TOCTOU 安全的条件检查：IsRunning 和 _starting 必须同时为 false
             lock (_lock)
@@ -170,12 +173,12 @@ namespace OpcDaToUaGateway.Services
                     if (!msg.StartsWith("[诊断]"))
                         _log.Append("  " + msg);
                 };
-                daClient.Start(_config.OpcDa.UpdateRateMs);
+                daClient.Start(_config.OpcDa.UpdateRateMs, _config.OpcDa.GetEffectiveMode());
 
                 _log.Append("[3/3] 启动数据桥接...");
                 bridge = new DataBridge(daClient, uaServer, _config.OpcDa.Tags);
                 bridge.OnLog += msg => _log.Append(msg);
-                bridge.Start();
+                await bridge.StartAsync(progressReport).ConfigureAwait(false);
 
                 // 所有步骤成功，在锁内一次性发布引用，确保外部观察者看到一致状态
                 lock (_lock)
@@ -222,7 +225,7 @@ namespace OpcDaToUaGateway.Services
                 try { daClient?.Dispose(); } catch { }
                 if (uaServer != null)
                 {
-                    try { await uaServer.StopAsync(); } catch { }
+                    try { uaServer.StopAsync().Wait(); } catch { }
                     try { uaServer.Dispose(); } catch { }
                 }
                 throw;
@@ -321,12 +324,12 @@ namespace OpcDaToUaGateway.Services
                 if (lastTicks > 0 && elapsedMs < backoffMs) return; // 退避期间跳过
                 Interlocked.Exchange(ref _lastReconnectAttemptTicks, nowTicks);
 
-                // H-32 修复：超过上限后不再递增，防止 int 溢出（虽然需要 ~21 亿次，但设计上不该依赖这个）。
-                //       如果计数器已经超过 MaxReconnectAttempts，强制截断。
-                if (attempts > MaxReconnectAttempts + 10)
+                // H-32 修复：超过上限后立即截断，防止 int 溢出（虽然需要 ~21 亿次，但设计上不该依赖这个）。
+                // 使用 Interlocked.CompareExchange 确保截断的原子性，避免与并发 Increment 竞态。
+                if (attempts > MaxReconnectAttempts)
                 {
                     // 截断到 MaxReconnectAttempts+1，保留"已超限"信号但不再增长
-                    Interlocked.Exchange(ref _reconnectAttempts, MaxReconnectAttempts + 1);
+                    Interlocked.CompareExchange(ref _reconnectAttempts, MaxReconnectAttempts + 1, attempts);
                     attempts = MaxReconnectAttempts + 1;
                 }
 

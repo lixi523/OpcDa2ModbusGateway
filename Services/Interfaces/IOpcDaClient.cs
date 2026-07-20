@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using OpcDaToUaGateway.Models;
 
 namespace OpcDaToUaGateway.Services.Interfaces
 {
@@ -28,8 +29,12 @@ namespace OpcDaToUaGateway.Services.Interfaces
         /// <summary>连接状态变化事件，用于向 UI 层报告连接/断开/错误等状态信息。</summary>
         event Action<string> OnStatusChanged;
 
-        /// <summary>启动客户端：连接服务器、创建订阅、注册异步回调。</summary>
-        void Start(int updateRateMs);
+        /// <summary>
+        /// 启动客户端：连接服务器、创建订阅、按指定数据获取方式注册回调或启动轮询。
+        /// </summary>
+        /// <param name="updateRateMs">刷新频率（毫秒），异步模式作为订阅推送周期、同步模式作为轮询周期。</param>
+        /// <param name="mode">数据获取方式（异步订阅 / 同步轮询）。</param>
+        void Start(int updateRateMs, DaAcquisitionMode mode);
 
         /// <summary>停止客户端：取消订阅、断开连接。失败时不应抛异常阻断后续资源释放。</summary>
         void Stop();

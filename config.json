@@ -2,6 +2,7 @@
   "OpcDa": {
     "ServerProgId": "Matrikon.OPC.Simulation.1",
     "UpdateRateMs": 1000,
+    "Mode": "Async",
     "Tags": [
       { "ItemId": "Random.Int32", "DisplayName": "随机整数", "DataType": "Int32" },
       { "ItemId": "Random.Real4", "DisplayName": "随机浮点数", "DataType": "Float" },

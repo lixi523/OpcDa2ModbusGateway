@@ -17,7 +17,7 @@ namespace OpcDaToUaGateway.Services.Interfaces
     /// 使用模式：
     ///   var fake = new FakeOpcDaClient();
     ///   fake.OnDataChanged += (key, val, good, ts) => { ... };
-    ///   fake.Start(1000);  // 模拟启动
+    ///   fake.Start(1000, DaAcquisitionMode.Async);  // 模拟启动
     ///   fake.RaiseDataChanged("Tag1", 42.0);  // 手动注入数据
     ///   fake.RaiseDisconnected();  // 手动模拟断连
     ///   fake.Dispose();
@@ -55,12 +55,16 @@ namespace OpcDaToUaGateway.Services.Interfaces
         /// <summary>TryReconnect 调用次数。</summary>
         public int ReconnectCount { get; private set; }
 
+        /// <summary>当前启动时使用的数据获取方式（供测试断言）。</summary>
+        public DaAcquisitionMode Mode { get; private set; }
+
         /// <inheritdoc />
-        public void Start(int updateRateMs)
+        public void Start(int updateRateMs, DaAcquisitionMode mode)
         {
+            Mode = mode;
             StartCount++;
             IsConnected = true;
-            OnStatusChanged?.Invoke($"[Fake] 模拟启动，更新周期 {updateRateMs}ms");
+            OnStatusChanged?.Invoke($"[Fake] 模拟启动，更新周期 {updateRateMs}ms，模式 {mode}");
         }
 
         /// <inheritdoc />

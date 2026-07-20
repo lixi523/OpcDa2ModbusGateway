@@ -8,9 +8,9 @@
     <LangVersion>8.0</LangVersion>
     <PlatformTarget>x86</PlatformTarget>
     <ApplicationIcon>..\app.ico</ApplicationIcon>
-    <Version>1.5.0</Version>
-    <AssemblyVersion>1.5.0.0</AssemblyVersion>
-    <FileVersion>1.5.0.0</FileVersion>
+    <Version>1.9.0</Version>
+    <AssemblyVersion>1.9.0.0</AssemblyVersion>
+    <FileVersion>1.9.0.0</FileVersion>
     <Company>OPC DA to UA Gateway</Company>
     <Product>OPC DA to OPC UA Gateway Keygen</Product>
     <Description>OPC DA to UA Gateway 授权码计算工具</Description>

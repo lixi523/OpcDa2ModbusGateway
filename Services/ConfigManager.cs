@@ -30,7 +30,7 @@ namespace OpcDaToUaGateway.Services
     ///   确保防抖 Timer 回调与 SaveImmediate() 不会并发执行序列化+写入。
     ///   Monitor 是可重入的，同一线程多次 Enter 不会死锁。
     /// </summary>
-    public class ConfigManager
+    public class ConfigManager : IDisposable
     {
         private readonly LogManager _log;
 
@@ -214,6 +214,12 @@ namespace OpcDaToUaGateway.Services
             if (Config.OpcDa.UpdateRateMs <= 0)
             {
                 Config.OpcDa.UpdateRateMs = 1000;
+            }
+
+            // 首次运行：未配置 ProgId 时填充默认值，让用户开箱即用
+            if (string.IsNullOrEmpty(Config.OpcDa.ServerProgId))
+            {
+                Config.OpcDa.ServerProgId = "Matrikon.OPC.Simulation.1";
             }
         }
 
@@ -542,6 +548,12 @@ namespace OpcDaToUaGateway.Services
         {
             try { _configWatcher?.Dispose(); } catch { }
             _configWatcher = null;
+        }
+
+        // H-40 改进：实现 IDisposable，确保 FileSystemWatcher 和 Timer 资源被正确释放
+        public void Dispose()
+        {
+            StopWatching();
         }
     }
 }
