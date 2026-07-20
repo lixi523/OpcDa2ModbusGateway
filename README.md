@@ -1,4 +1,4 @@
-﻿# OPC DA → OPC UA 网关（OpcDaToUaGateway）
+# OPC DA → OPC UA 网关（OpcDaToUaGateway）
 
 ![Build](https://github.com/lixi523/OpcDaToUaGateway/actions/workflows/build.yml/badge.svg)
 
@@ -92,7 +92,7 @@ dotnet build OpcDaToUaGateway.sln -c Release -v minimal
 
 | 版本 | 日期 | 变更摘要 |
 |---|---|---|
-| **V1.9.0** | 2026-07-17 | **全面代码审查 + P0 修复**：修复 `HealthSnapshot.Capture()` Monitor.TryEnter/Exit 不配对导致 `SynchronizationLockException`（2处）；实施 P1 改进：`DataBridge.StartAsync` _uaServer 快照防竞态、`LicenseManager` _disposed 防 Tick 后执行、`LogManager.Dispose` 超时改 `_log.Append` 告警、`ConfigManager` 实现 `IDisposable`、`AppVersion` 同步。编译 0 警告 0 错误。 |
+| **V1.9.0** | 2026-07-20 | **全面代码审查 + 启动卡顿最终修复 + DA模式切换**：① DataBridge.StartAsync 异步启动（`Task.Run` 后台线程创建节点 + SynchronizationContext.Post 进度回调），3.5 万节点场景窗口保持响应；② 新增 DA 数据获取方式选择（异步订阅/同步轮询），UI 下拉框 + 配置持久化；③ 首次运行默认填充 ProgId `Matrikon.OPC.Simulation.1`，开箱即用；④ 未选择服务器时禁用「获取点位」「启动网关」按钮；⑤ Boolean 类型转换增强（支持字符串 "true"/"1"/"yes" 等）；⑥ SourceTimestamp 单调递增修复（bool 翻转标签可被 UA 客户端正确检测）；⑦ Dispose 后重连检查、Monitor.Exit 安全检查、SafeInvoke 句柄防护；⑧ ConfigManager 实现 IDisposable；⑨ 版本号 1.5.0 → 1.9.0；⑩ 删除 PLAN.md（文档整合完成）。编译 0 警告 0 错误。 |
 | V1.8.1 | 2026-07-17 | **启动卡顿最终修复**：3.5 万次 `AddVariableNode` 移至后台线程（`Task.Run`），UI 线程通过 `SynchronizationContext.Post` 安全输出进度日志。真实环境验证窗口保持响应。 |
 | V1.8.0 | 2026-07-16 | 移除 V1.7.0 新增的「已连接客户端」列表功能；修复启动窗口「未响应」卡顿根因（逐节点 `Diag()` 导致 O(n²) 日志洪泛）。编译 0 警告 0 错误。 |
 | V1.7.0 | 2026-07-15 | 定稿发布：修复 3 个运行时缺陷（`SafeBeginInvoke` 句柄防护、UTC 时间戳显示转换、DA 质量判定修正 `value.Quality.Status & 0xC0`）；UA 设置区 UI 调整。 |
@@ -124,11 +124,11 @@ dotnet build OpcDaToUaGateway.sln -c Release -v minimal
 | 事件订阅泄漏 / 跨线程异常 | ✅ 已解决 | `RunningStateChanged` 补 `SafeInvoke` 封送；`SafeInvoke` 增加 `IsDisposed/IsHandleCreated` 防护 |
 | SafeInvoke 死锁 | ✅ 已缓解 | 保持 `Invoke`（与 `LogManager` 一致），增加句柄防护规避关闭期 `ObjectDisposedException` |
 | 频繁翻转 bool 标签不更新 | ✅ 已解决 | `UpdateValue` 单调时间戳下限改为网关 UTC 时钟；快照时间戳改用网关接收时刻 |
-| 未运行时测试 | 🔴 高 | 无 OPC DA 真实环境验证；编译 0 警告 0 错误，逻辑已静态核对 |
+| 未运行时测试 | 🟡 中 | 编译 0 警告 0 错误，逻辑已静态核对；V1.8.1 已在真实 3.5 万节点场景验证 UI 响应
 | [Conditional("DEBUG")] 排障信息丢失 | 🟡 中 | Release 模式移除诊断日志，生产环境排障需临时用 Debug 构建 |
 
 **建议**：
-1. 在实际 OPC DA 环境中启动网关，验证 3.5 万节点场景窗口保持响应
+1. 在实际 OPC DA 环境中验证 DA 数据获取模式切换（异步/同步）及按钮状态控制
 2. 如需新功能：按后续指令执行
 
 ---
