@@ -1,9 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Threading;
-using OpcDaToUaGateway.Models;
+using OpcDaToModbusGateway.Models;
 
-namespace OpcDaToUaGateway.Services.Interfaces
+namespace OpcDaToModbusGateway.Services.Interfaces
 {
     /// <summary>
     /// OPC DA 客户端的 Fake 实现 —— 用于单元测试和故障注入演示。

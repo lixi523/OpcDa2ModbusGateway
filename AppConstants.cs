@@ -1,6 +1,6 @@
 using System;
 
-namespace OpcDaToUaGateway
+namespace OpcDaToModbusGateway
 {
     /// <summary>
     /// 应用全局常量 — 集中管理所有可调参数、Magic Numbers 和默认值。
@@ -31,22 +31,19 @@ namespace OpcDaToUaGateway
         /// <summary>DA 浏览最大条目数上限</summary>
         public const int DaMaxBrowseItems = 50000;
 
-        // H-33: 变量节点缓存上限 — 防止配置错误导致 OOM
-        // 100000 个 BaseDataVariableState 约 500MB，作为安全阈值
-        public const int MaxVariableNodes = 100000;
-
+        
         // ══════════════════════════════════════════════════
         //  OPC UA 相关
         // ══════════════════════════════════════════════════
 
         /// <summary>扁平标签批量分组大小 — 每批最多 N 个变量，超过则创建新的 Batch 子文件夹</summary>
-        public const int UaFlatBatchSize = 1000;
+        public const int ModbusFlatBatchSize = 1000;
 
         /// <summary>命名空间索引默认值 — NS0=OPC UA base, NS1=server URI, NS2=custom</summary>
-        public const ushort UaDefaultNamespaceIndex = 2;
+        public const ushort ModbusDefaultSlaveId = 2;
 
         /// <summary>默认 UA 服务器端口</summary>
-        public const int UaDefaultPort = 4840;
+        public const int ModbusDefaultPort = 4840;
 
         // ══════════════════════════════════════════════════
         //  日志管理

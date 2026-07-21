@@ -1,19 +1,19 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net472</TargetFramework>
-    <RootNamespace>OpcDaToUaGateway.Keygen</RootNamespace>
-    <AssemblyName>OpcDaToUaGateway.Keygen</AssemblyName>
+    <RootNamespace>OpcDaToModbusGateway.Keygen</RootNamespace>
+    <AssemblyName>OpcDaToModbusGateway.Keygen</AssemblyName>
     <LangVersion>8.0</LangVersion>
     <PlatformTarget>x86</PlatformTarget>
     <ApplicationIcon>..\app.ico</ApplicationIcon>
     <Version>1.9.0</Version>
     <AssemblyVersion>1.9.0.0</AssemblyVersion>
     <FileVersion>1.9.0.0</FileVersion>
-    <Company>OPC DA to UA Gateway</Company>
+    <Company>OPC DA to Modbus TCP Gateway</Company>
     <Product>OPC DA to OPC UA Gateway Keygen</Product>
-    <Description>OPC DA to UA Gateway 授权码计算工具</Description>
+    <Description>OPC DA to Modbus TCP Gateway 授权码计算工具</Description>
     <Copyright>Copyright © 2026</Copyright>
   </PropertyGroup>
 

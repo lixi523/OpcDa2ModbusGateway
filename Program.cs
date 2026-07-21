@@ -5,7 +5,7 @@ using System.Threading;
 using System.Windows.Forms;
 using TitaniumAS.Opc.Client;
 
-namespace OpcDaToUaGateway
+namespace OpcDaToModbusGateway
 {
     /// <summary>
     /// 应用程序入口类，负责程序启动流程、单实例检测和全局异常处理。
@@ -47,7 +47,7 @@ namespace OpcDaToUaGateway
         //
         // 命名约定与看门狗（Watchdog）共享，确保看门狗和主程序也互斥。
         // =====================================================================
-        private const string SingleInstanceMutexName = "OpcDaToUaGateway_SingleInstance";
+        private const string SingleInstanceMutexName = "OpcDaToModbusGateway_SingleInstance";
 
         /// <summary>
         /// 程序入口点。

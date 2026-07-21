@@ -1,12 +1,12 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
 using System.Threading.Tasks;
 using System.Windows.Forms;
-using OpcDaToUaGateway.Models;
+using OpcDaToModbusGateway.Models;
 
-namespace OpcDaToUaGateway
+namespace OpcDaToModbusGateway
 {
     /// <summary>
     /// OPC DA 点位选择对话框
@@ -29,8 +29,7 @@ namespace OpcDaToUaGateway
 
         private readonly string _serverProgId;
         private readonly Action<string> _logger;  // 日志委托，用于显示诊断信息
-        private readonly ushort _namespaceIndex;   // OPC UA 命名空间索引，用于预分配 NodeId
-        private List<OpcDaItemInfo> _allItems = new List<OpcDaItemInfo>();
+                private List<OpcDaItemInfo> _allItems = new List<OpcDaItemInfo>();
         private List<OpcDaItemInfo> _displayItems = new List<OpcDaItemInfo>();  // 虚拟模式：当前显示的项（过滤后）
 
         // P1 修复：过滤防抖 Timer，避免每次击键都重建 ListView
@@ -56,11 +55,11 @@ namespace OpcDaToUaGateway
         /// <summary>
         /// 创建浏览对话框，并传入日志委托用于显示诊断信息，以及命名空间索引用于预分配 NodeId。
         /// </summary>
-        public ItemSelectionDialog(string serverProgId, Action<string> logger, ushort namespaceIndex = 2)
+        public ItemSelectionDialog(string serverProgId, Action<string> logger)
         {
             _serverProgId = serverProgId;
             _logger = logger;
-            _namespaceIndex = namespaceIndex;
+            
             BuildUI();
         }
 
@@ -761,10 +760,10 @@ namespace OpcDaToUaGateway
             // 启动网关时 DataBridge 直接使用预分配的 NodeId 创建 UA 节点，无需启动时重复计算。
             foreach (var tag in SelectedTags)
             {
-                tag.UaNodeId = $"DaTag_{tag.TagKey}";
+                tag.ModbusAddress = 0;
             }
 
-            _logger?.Invoke($"[Browse] 已预分配 {SelectedTags.Count} 个 UA NodeId (ns={_namespaceIndex})");
+            _logger?.Invoke($"[Browse] 已预分配 {SelectedTags.Count} 个 UA NodeId (ns=[Modbus])");
 
             DialogResult = DialogResult.OK;
             Close();

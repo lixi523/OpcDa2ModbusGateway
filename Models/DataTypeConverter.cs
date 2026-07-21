@@ -1,139 +1,127 @@
 using System;
-using System.Collections.Generic;
-using Opc.Ua;
 
-namespace OpcDaToUaGateway.Models
+namespace OpcDaToModbusGateway.Models
 {
     /// <summary>
-    /// OPC UA 数据类型映射的单一真源（Single Source of Truth）。
-    ///
-    /// <para>P0-2 重构：原先 GetDataTypeId / GetDefaultValue / ParseDataType 三处重复的
-    /// switch-case 映射分散在 GatewayNodeManager 和 GatewayOpcUaServer 中。
-    /// 现在全部收敛到此静态类，使用 Dictionary 缓存实现 O(1) 查找。</para>
-    ///
-    /// <para>线程安全：所有字典在静态构造器中一次性填充，此后再无写入操作，
-    /// 因此可以安全地在多线程环境中并发读取，无需任何同步机制。</para>
+    /// Data type identifier enum for DA value conversion.
+    /// Replaces the OPC UA BuiltInType dependency.
+    /// </summary>
+    public enum DataTypeId
+    {
+        Boolean,
+        SByte,
+        Byte,
+        Int16,
+        UInt16,
+        Int32,
+        UInt32,
+        Float,
+        Double,
+        String,
+        DateTime
+    }
+
+    /// <summary>
+    /// Data type converter — maps string names to DataTypeId and provides default values.
+    /// Thread-safe: all dictionaries are populated once in the static constructor.
     /// </summary>
     public static class DataTypeConverter
     {
-        // ================================================================
-        //  BuiltInType → DataType NodeId 映射
-        // ================================================================
-        private static readonly Dictionary<BuiltInType, NodeId> DataTypeNodeIds;
+        /// <summary>String name to DataTypeId mapping (case-insensitive).</summary>
+        private static readonly System.Collections.Generic.Dictionary<string, DataTypeId> NameToType;
 
-        // ================================================================
-        //  BuiltInType → 默认值映射
-        // ================================================================
-        private static readonly Dictionary<BuiltInType, object> DefaultValues;
+        /// <summary>DataTypeId to default value mapping.</summary>
+        private static readonly System.Collections.Generic.Dictionary<DataTypeId, object> DefaultValues;
 
-        // ================================================================
-        //  字符串名称 → BuiltInType 映射（支持别名，大小写不敏感）
-        // ================================================================
-        private static readonly Dictionary<string, BuiltInType> NameToType;
-
-        /// <summary>
-        /// 静态构造器 — 一次性填充所有字典，后续零分配纯查找。
-        /// </summary>
         static DataTypeConverter()
         {
-            DataTypeNodeIds = new Dictionary<BuiltInType, NodeId>
+            NameToType = new System.Collections.Generic.Dictionary<string, DataTypeId>(StringComparer.OrdinalIgnoreCase)
             {
-                [BuiltInType.Boolean]  = DataTypeIds.Boolean,
-                [BuiltInType.SByte]    = DataTypeIds.SByte,
-                [BuiltInType.Byte]     = DataTypeIds.Byte,
-                [BuiltInType.Int16]    = DataTypeIds.Int16,
-                [BuiltInType.Int32]    = DataTypeIds.Int32,
-                [BuiltInType.Int64]    = DataTypeIds.Int64,
-                [BuiltInType.UInt16]   = DataTypeIds.UInt16,
-                [BuiltInType.UInt32]   = DataTypeIds.UInt32,
-                [BuiltInType.UInt64]   = DataTypeIds.UInt64,
-                [BuiltInType.Float]    = DataTypeIds.Float,
-                [BuiltInType.Double]   = DataTypeIds.Double,
-                [BuiltInType.String]   = DataTypeIds.String,
-                [BuiltInType.DateTime] = DataTypeIds.DateTime,
+                ["boolean"] = DataTypeId.Boolean,
+                ["bool"] = DataTypeId.Boolean,
+                ["sbyte"] = DataTypeId.SByte,
+                ["byte"] = DataTypeId.Byte,
+                ["int16"] = DataTypeId.Int16,
+                ["short"] = DataTypeId.Int16,
+                ["uint16"] = DataTypeId.UInt16,
+                ["ushort"] = DataTypeId.UInt16,
+                ["int32"] = DataTypeId.Int32,
+                ["int"] = DataTypeId.Int32,
+                ["uint32"] = DataTypeId.UInt32,
+                ["uint"] = DataTypeId.UInt32,
+                ["float"] = DataTypeId.Float,
+                ["real4"] = DataTypeId.Float,
+                ["double"] = DataTypeId.Double,
+                ["real8"] = DataTypeId.Double,
+                ["string"] = DataTypeId.String,
+                ["datetime"] = DataTypeId.DateTime,
             };
 
-            DefaultValues = new Dictionary<BuiltInType, object>
+            DefaultValues = new System.Collections.Generic.Dictionary<DataTypeId, object>
             {
-                [BuiltInType.Boolean]  = false,
-                [BuiltInType.SByte]    = (sbyte)0,
-                [BuiltInType.Byte]     = (byte)0,
-                [BuiltInType.Int16]    = (short)0,
-                [BuiltInType.Int32]    = (int)0,
-                [BuiltInType.Int64]    = 0L,
-                [BuiltInType.UInt16]   = (ushort)0,
-                [BuiltInType.UInt32]   = (uint)0,
-                [BuiltInType.UInt64]   = 0UL,
-                [BuiltInType.Float]    = 0.0f,
-                [BuiltInType.Double]   = 0.0,
-                [BuiltInType.String]   = string.Empty,
-                [BuiltInType.DateTime] = DateTime.MinValue,
-            };
-
-            NameToType = new Dictionary<string, BuiltInType>(StringComparer.OrdinalIgnoreCase)
-            {
-                ["boolean"] = BuiltInType.Boolean,
-                ["bool"]    = BuiltInType.Boolean,
-                ["sbyte"]   = BuiltInType.SByte,
-                ["byte"]    = BuiltInType.Byte,
-                ["int16"]   = BuiltInType.Int16,
-                ["short"]   = BuiltInType.Int16,
-                ["int32"]   = BuiltInType.Int32,
-                ["int"]     = BuiltInType.Int32,
-                ["int64"]   = BuiltInType.Int64,
-                ["long"]    = BuiltInType.Int64,
-                ["uint16"]  = BuiltInType.UInt16,
-                ["ushort"]  = BuiltInType.UInt16,
-                ["uint32"]  = BuiltInType.UInt32,
-                ["uint"]    = BuiltInType.UInt32,
-                ["uint64"]  = BuiltInType.UInt64,
-                ["ulong"]   = BuiltInType.UInt64,
-                ["float"]   = BuiltInType.Float,
-                ["real4"]   = BuiltInType.Float,
-                ["double"]  = BuiltInType.Double,
-                ["real8"]   = BuiltInType.Double,
-                ["string"]  = BuiltInType.String,
-                ["datetime"] = BuiltInType.DateTime,
+                [DataTypeId.Boolean] = false,
+                [DataTypeId.SByte] = (sbyte)0,
+                [DataTypeId.Byte] = (byte)0,
+                [DataTypeId.Int16] = (short)0,
+                [DataTypeId.UInt16] = (ushort)0,
+                [DataTypeId.Int32] = 0,
+                [DataTypeId.UInt32] = 0u,
+                [DataTypeId.Float] = 0.0f,
+                [DataTypeId.Double] = 0.0,
+                [DataTypeId.String] = "",
+                [DataTypeId.DateTime] = DateTime.MinValue,
             };
         }
 
         /// <summary>
-        /// 将 BuiltInType 映射为对应的 UA 标准 DataType NodeId。
-        /// 未识别的类型回退到 BaseDataType（等同于 Variant）。
+        /// Parse a string to DataTypeId.
         /// </summary>
-        /// <param name="type">UA 内置数据类型枚举。</param>
-        /// <returns>UA 标准 DataType 的 NodeId。</returns>
-        public static NodeId GetDataTypeNodeId(BuiltInType type)
+        public static DataTypeId ParseDataType(string typeName)
         {
-            return DataTypeNodeIds.TryGetValue(type, out var nodeId)
-                ? nodeId
-                : DataTypeIds.BaseDataType;
+            if (string.IsNullOrEmpty(typeName)) return DataTypeId.Int32;
+            // Strip "System." prefix if present (e.g., "System.Int32" -> "Int32")
+            string normalized = typeName.StartsWith("System.", StringComparison.OrdinalIgnoreCase)
+                ? typeName.Substring(7)
+                : typeName;
+            return NameToType.TryGetValue(normalized, out var result) ? result : DataTypeId.Int32;
         }
 
         /// <summary>
-        /// 为指定数据类型生成安全的默认值，用于变量节点创建时的初始赋值。
-        /// 未识别的类型返回 null（将序列化为 UA Variant null）。
+        /// Get the default value for a given DataTypeId.
         /// </summary>
-        /// <param name="type">UA 内置数据类型枚举。</param>
-        /// <returns>该类型的零值对象。</returns>
-        public static object GetDefaultValue(BuiltInType type)
+        public static object GetDefaultValue(DataTypeId typeId)
         {
-            return DefaultValues.TryGetValue(type, out var value) ? value : null;
+            return DefaultValues.TryGetValue(typeId, out var value) ? value : 0;
         }
 
         /// <summary>
-        /// 将配置文件中指定的数据类型名称解析为 UA BuiltInType 枚举。
-        /// 支持常见别名（如 "bool" → Boolean, "real4" → Float）。
-        /// 无法识别的类型回退到 Variant（UA 的通用类型，可容纳任意类型值）。
+        /// Convert a value to the target type. Returns null if conversion fails.
         /// </summary>
-        /// <param name="typeName">数据类型名称（大小写不敏感）。</param>
-        /// <returns>对应的 BuiltInType 枚举值。</returns>
-        public static BuiltInType ParseDataType(string typeName)
+        public static object ConvertValue(object value, DataTypeId targetType)
         {
-            if (string.IsNullOrEmpty(typeName)) return BuiltInType.Variant;
-            return NameToType.TryGetValue(typeName.Trim(), out var type)
-                ? type
-                : BuiltInType.Variant;
+            if (value == null) return GetDefaultValue(targetType);
+            try
+            {
+                switch (targetType)
+                {
+                    case DataTypeId.Boolean: return System.Convert.ToBoolean(value);
+                    case DataTypeId.SByte: return System.Convert.ToSByte(value);
+                    case DataTypeId.Byte: return System.Convert.ToByte(value);
+                    case DataTypeId.Int16: return System.Convert.ToInt16(value);
+                    case DataTypeId.UInt16: return System.Convert.ToUInt16(value);
+                    case DataTypeId.Int32: return System.Convert.ToInt32(value);
+                    case DataTypeId.UInt32: return System.Convert.ToUInt32(value);
+                    case DataTypeId.Float: return System.Convert.ToSingle(value);
+                    case DataTypeId.Double: return System.Convert.ToDouble(value);
+                    case DataTypeId.String: return value?.ToString() ?? "";
+                    case DataTypeId.DateTime: return System.Convert.ToDateTime(value);
+                    default: return value;
+                }
+            }
+            catch
+            {
+                return GetDefaultValue(targetType);
+            }
         }
     }
 }

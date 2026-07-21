@@ -3,7 +3,7 @@ using System.Management;
 using System.Security.Cryptography;
 using System.Text;
 
-namespace OpcDaToUaGateway
+namespace OpcDaToModbusGateway
 {
     /// <summary>
     /// 授权码算法，主程序和授权码生成工具（Keygen）共享此类。

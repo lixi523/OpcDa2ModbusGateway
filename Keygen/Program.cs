@@ -1,5 +1,5 @@
 // =====================================================================
-// OPC DA to UA Gateway — 授权码计算工具（Keygen）
+// OPC DA to Modbus TCP Gateway — 授权码计算工具（Keygen）
 // =====================================================================
 //
 // 本文件是独立的控制台应用程序，供管理员为终端用户生成授权码。
@@ -23,7 +23,7 @@
 
 using System;
 
-namespace OpcDaToUaGateway.Keygen
+namespace OpcDaToModbusGateway.Keygen
 {
     /// <summary>
     /// 授权码计算工具的控制台入口。
@@ -46,7 +46,7 @@ namespace OpcDaToUaGateway.Keygen
         {
             // 设置控制台输出编码为 UTF-8，确保中文正确显示
             Console.OutputEncoding = System.Text.Encoding.UTF8;
-            Console.Title = "OPC DA to UA Gateway - 授权码计算工具";
+            Console.Title = "OPC DA to Modbus TCP Gateway - 授权码计算工具";
 
             Console.WriteLine("================================================");
             Console.WriteLine("  OPC DA → OPC UA 网关 授权码计算工具 v1.5.0");

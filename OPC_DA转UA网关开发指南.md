@@ -1,10 +1,10 @@
-# OPC DA 转 OPC UA 网关开发指南
+# OPC DA 转 Modbus TCP 网关开发指南
 
 **版本：1.8.0**
 
 ## 项目概述
 
-OpcDaToUaGateway 是一个 Windows 桌面应用程序，充当 OPC DA（基于 COM 的传统工业协议）与 OPC UA（基于 TCP 的现代工业协议）之间的协议网关。它从 OPC DA 服务器读取实时数据，并通过内嵌的 OPC UA 服务器将数据重新发布，使现代 OPC UA 客户端能够访问OPC DA 数据源。
+OpcDaToModbusGateway 是一个 Windows 桌面应用程序，充当 OPC DA（基于 COM 的传统工业协议）与 Modbus TCP（基于 TCP 的标准工业协议）之间的协议网关。它从 OPC DA 服务器读取实时数据，并通过内嵌的 Modbus TCP 服务器将数据重新发布，使现代 Modbus TCP 客户端能够访问 OPC DA 数据源。
 
 **目标平台：** .NET Framework 4.7.2，x86（因 OPC DA COM 组件为 32 位）。
 
@@ -12,9 +12,9 @@ OpcDaToUaGateway 是一个 Windows 桌面应用程序，充当 OPC DA（基于 C
 
 | 项目 | 输出 | 用途 |
 |---|---|---|
-| OpcDaToUaGateway | OpcDaToUaGateway.exe (WinForms) | 主程序：UI、DA 客户端、UA 服务器、数据桥接、授权管理 |
-| OpcDaToUaGateway.Watchdog | OpcDaToUaGateway.Watchdog.exe (无依赖) | 独立进程：监控主程序并自动重启 |
-| OpcDaToUaGateway.Keygen | OpcDaToUaGateway.Keygen.exe (控制台) | 授权码计算工具：根据 PCID 生成授权码 |
+| OpcDaToModbusGateway | OpcDaToModbusGateway.exe (WinForms) | 主程序：UI、DA 客户端、Modbus TCP 服务器、数据桥接、授权管理 |
+| OpcDaToModbusGateway.Watchdog | OpcDaToModbusGateway.Watchdog.exe (无依赖) | 独立进程：监控主程序并自动重启 |
+| OpcDaToModbusGateway.Keygen | OpcDaToModbusGateway.Keygen.exe (控制台) | 授权码计算工具：根据 PCID 生成授权码 |
 
 **部署特点：** 通过 Costura.Fody 将所有托管依赖 DLL 嵌入主 exe，部署时无需附带外部 DLL 文件。
 
@@ -35,30 +35,30 @@ OpcDaToUaGateway 是一个 Windows 桌面应用程序，充当 OPC DA（基于 C
 │  └──────────┘    └────────────┘              │                  │
 │                                              ▼                  │
 │                                     ┌───────────────────┐       │
-│                                     │ GatewayOpcUaServer │       │
-│                                     │ (内嵌 UA 服务器)   │       │
+│                                     │ GatewayModbusTcpServer │    │
+│                                     │ (内嵌 Modbus TCP 服务器) │   │
 │                                     └─────────┬─────────┘       │
 │                                               │                 │
 │  ┌─────────────────────┐                      │                 │
 │  │ LicenseAlgorithm    │                      │                 │
 │  │ (PCID + HMAC 授权)  │                      │                 │
 │  └─────────────────────┘                      │                 │
-│                                               │ opc.tcp://
+│                                               │ TCP/IP
 └───────────────────────────────────────────────┼─────────────────┘
                                                 │
                                                 ▼
                                       ┌──────────────────┐
-                                      │ OPC UA Clients   │
-                                      │ (SCADA / MES 等) │
+                                      │ Modbus TCP Clients│
+                                      │ (SCADA / MES / PLC)│
                                       └──────────────────┘
 
 ┌─────────────────────────────────────┐
-│ OpcDaToUaGateway.Watchdog.exe       │
+│ OpcDaToModbusGateway.Watchdog.exe   │
 │ (独立进程，监控主程序，崩溃自动重启) │
 └─────────────────────────────────────┘
 
 ┌─────────────────────────────────────┐
-│ OpcDaToUaGateway.Keygen.exe         │
+│ OpcDaToModbusGateway.Keygen.exe     │
 │ (控制台工具，根据 PCID 计算授权码)   │
 └─────────────────────────────────────┘
 ```
@@ -92,9 +92,8 @@ Program.cs (STA 入口 + 单实例 Mutex)
 | 包名 | 版本 | 用途 |
 |---|---|---|
 | Newtonsoft.Json | 13.0.4 | config.json 序列化/反序列化 |
-| OPCFoundation.NetStandard.Opc.Ua.Server | 1.5.378.145 | OPC UA 服务器核心库 |
-| OPCFoundation.NetStandard.Opc.Ua.Configuration | 1.5.378.145 | UA 应用配置与证书管理 |
-| Technosoftware.DaAeHdaSolution.DaAeHdaClient | 2.0.1 | OPC DA 客户端 COM 封装 |
+| NModbus | 3.0.81 | Modbus TCP 服务器核心库 |
+| TitaniumAS.Opc.Client | 3.1.0 | OPC DA 客户端 COM 封装 |
 | Costura.Fody | 5.7.0 | 将所有托管 DLL 嵌入主 exe（编译时织入） |
 
 ### 框架引用
@@ -109,24 +108,24 @@ Program.cs (STA 入口 + 单实例 Mutex)
 ## 项目结构
 
 ```
-OpcDaToUaGateway/
-├── OpcDaToUaGateway.sln              # 解决方案文件（含三个项目）
-├── OpcDaToUaGateway.csproj           # 主项目文件（含版本号 1.8.0）
+OpcDaToModbusGateway/
+├── OpcDaToModbusGateway.sln          # 解决方案文件（含三个项目）
+├── OpcDaToModbusGateway.csproj       # 主项目文件（含版本号 1.8.0）
 ├── FodyWeavers.xml                   # Costura.Fody DLL 嵌入配置
 ├── Program.cs                        # 应用程序入口 (STAThread + 单实例 Mutex)
 ├── MainForm.cs                       # 主窗口（UI 构建 + 协调各 Manager）
 ├── AboutDialog.cs                    # 关于对话框（版本、PCID、授权码输入）
 ├── OpcDaClient.cs                    # OPC DA 客户端
-├── GatewayOpcUaServer.cs             # OPC UA 服务器 + 节点管理器
-├── DataBridge.cs                     # 数据桥接器 (DA→UA)
+├── GatewayModbusTcpServer.cs         # Modbus TCP 服务器
+├── DataBridge.cs                     # 数据桥接器 (DA→Modbus)
 ├── OpcServerScanner.cs               # DA 服务器发现 (5种策略)
 ├── ServerSelectionDialog.cs          # 服务器选择对话框
-├── TextBoxExtensions.cs            # P/Invoke 占位符文本扩展（共享）
+├── TextBoxExtensions.cs              # P/Invoke 占位符文本扩展（共享）
 ├── ItemSelectionDialog.cs            # 标签选择/导入导出对话框
 ├── app.ico                           # 应用程序图标 (多尺寸 ICO)
 ├── config.json                       # 运行时配置文件
 ├── Models/
-│   ├── TagConfig.cs                  # 数据模型 (TagConfig, AppConfig, OpcUaConfig 等)
+│   ├── TagConfig.cs                  # 数据模型 (TagConfig, AppConfig, ModbusTcpConfig 等)
 │   └── LicenseAlgorithm.cs          # 授权码算法 (PCID 生成 + HMAC-SHA256 验证)
 ├── Services/
 │   ├── LogManager.cs                 # 日志管理（UI显示 + 文件持久化 + 过期清理）
@@ -134,16 +133,11 @@ OpcDaToUaGateway/
 │   ├── WatchdogManager.cs           # 看门狗管理（启停/进程清理/状态事件）
 │   └── GatewayManager.cs            # 网关生命周期（启动/停止/健康监控/DA重连）
 ├── Keygen/
-│   ├── OpcDaToUaGateway.Keygen.csproj  # 授权码计算工具项目
+│   ├── OpcDaToModbusGateway.Keygen.csproj  # 授权码计算工具项目
 │   └── Program.cs                    # 控制台入口（交互模式 + 命令行模式）
 ├── Watchdog/
-│   ├── OpcDaToUaGateway.Watchdog.csproj
+│   ├── OpcDaToModbusGateway.Watchdog.csproj
 │   └── Program.cs                    # 看门狗独立进程
-├── Certificates/                     # UA 证书目录 (运行时自动创建)
-│   ├── Own/
-│   ├── Trusted/
-│   ├── Rejected/
-│   └── Issuers/
 └── logs/                             # 运行日志目录 (自动创建)
     ├── gateway_yyyy-MM-dd.log        # 主程序日志（按日分文件）
     └── watchdog.log                  # 看门狗日志（单文件，自动清理）
@@ -163,20 +157,14 @@ OpcDaToUaGateway/
       { "ItemId": "Random.Int32", "DisplayName": "...", "DataType": "Int32" }
     ]
   },
-  "OpcUa": {
-    "ServerName": "OpcDaToUaGateway",
-    "Port": 4840,
-    "NamespaceUri": "http://gateway.example.com/OpcDaBridge/",
+  "ModbusTcp": {
     "ListenAddress": "localhost",
-    "SecurityMode": "None",
-    "SecurityPolicy": "None",
-    "AutoAcceptCertificates": false,
-    "MaxSessionCount": 50,
-    "SessionTimeout": 120000
+    "Port": 502,
+    "SlaveId": 1
   },
   "LastConnectedProgId": "",
   "AutoConnectDa": false,
-  "AutoStartUa": false,
+  "AutoStartModbus": false,
   "AutoStartWithWindows": false,
   "EnableWatchdog": false,
   "AuthorizationCode": ""
@@ -188,7 +176,7 @@ OpcDaToUaGateway/
 | 字段 | 类型 | 说明 |
 |---|---|---|
 | ItemId | string | OPC DA 标签的完全限定名 |
-| DisplayName | string | 在 UA 中显示的名称 |
+| DisplayName | string | 在点表中显示的名称 |
 | DataType | string | 数据类型：Boolean, Int16, Int32, UInt16, UInt32, Float, Double, String, DateTime |
 | TagKey | string | 内部唯一标识（不持久化，加载时由 `AssignTagKeys` 分配） |
 
@@ -198,15 +186,9 @@ OpcDaToUaGateway/
 
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| ServerName | string | OpcDaToUaGateway | OPC UA 服务器名称 |
-| Port | int | 4840 | TCP 监听端口 |
-| NamespaceUri | string | http://gateway.example.com/OpcDaBridge/ | 自定义命名空间 URI |
 | ListenAddress | string | localhost | 监听地址：`localhost` 仅本机，`0.0.0.0` 允许远程 |
-| SecurityMode | string | None | 安全模式：None / Sign / SignAndEncrypt |
-| SecurityPolicy | string | None | 安全策略：None / Basic256Sha256 / Basic128Rsa15 / Basic256 |
-| AutoAcceptCertificates | bool | false | 自动接受不受信任的客户端证书（生产环境默认关闭，需手动信任） |
-| MaxSessionCount | int | 50 | 最大并发 UA 会话数 |
-| SessionTimeout | int | 120000 | 会话超时（毫秒） |
+| Port | int | 502 | Modbus TCP 监听端口 |
+| SlaveId | byte | 1 | Modbus 从站 ID（1-247） |
 
 **AppConfig 授权字段：**
 

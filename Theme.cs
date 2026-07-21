@@ -1,7 +1,7 @@
 using System.Drawing;
 using System.Windows.Forms;
 
-namespace OpcDaToUaGateway
+namespace OpcDaToModbusGateway
 {
     /// <summary>
     /// 全局视觉主题 — 统一配色、字体、间距常量

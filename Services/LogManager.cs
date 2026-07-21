@@ -5,7 +5,7 @@ using System.Text;
 using System.Threading;
 using System.Windows.Forms;
 
-namespace OpcDaToUaGateway.Services
+namespace OpcDaToModbusGateway.Services
 {
     /// <summary>
     /// 日志管理器 — 双输出通道（UI 实时显示 + 异步文件持久化）。

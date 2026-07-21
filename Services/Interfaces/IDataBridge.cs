@@ -1,8 +1,8 @@
 using System;
 using System.Collections.Generic;
-using OpcDaToUaGateway.Models;
+using OpcDaToModbusGateway.Models;
 
-namespace OpcDaToUaGateway.Services.Interfaces
+namespace OpcDaToModbusGateway.Services.Interfaces
 {
     /// <summary>
     /// 数据桥接器接口 —— 抽象出 DA → UA 数据转发的核心契约。

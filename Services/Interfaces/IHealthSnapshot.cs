@@ -1,7 +1,7 @@
 using System;
-using OpcDaToUaGateway.Models;
+using OpcDaToModbusGateway.Models;
 
-namespace OpcDaToUaGateway.Services.Interfaces
+namespace OpcDaToModbusGateway.Services.Interfaces
 {
     /// <summary>
     /// 运行状态快照采集器契约。

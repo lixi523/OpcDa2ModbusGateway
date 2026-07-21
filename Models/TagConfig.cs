@@ -1,9 +1,8 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
-using Opc.Ua;
 
-namespace OpcDaToUaGateway.Models
+namespace OpcDaToModbusGateway.Models
 {
     // =====================================================================
     // 配置模型类总览
@@ -14,7 +13,7 @@ namespace OpcDaToUaGateway.Models
     //   AppConfig              —— 顶层配置，包含 DA/UA 子配置和全局选项
     //   ├── OpcDaConfig        —— OPC DA 连接配置（服务器地址、刷新频率、标签列表）
     //   │   └── TagConfig      —— 单个 DA 标签的配置（ItemId、显示名、数据类型）
-    //   └── OpcUaConfig        —— OPC UA 服务器配置（端口、安全模式、会话限制等）
+    //   └── ModbusTcpConfig        —— OPC UA 服务器配置（端口、安全模式、会话限制等）
     //
     // 配置通过 System.Text.Json 反序列化，属性名与 JSON key 一一对应。
     // GetEffective* 方法为每个可选配置项提供带默认值的安全访问入口，
@@ -43,6 +42,26 @@ namespace OpcDaToUaGateway.Models
         /// 决定了 <see cref="DataBridge"/> 在转发数据时如何做类型转换。
         /// </summary>
         public string DataType { get; set; }
+        /// <summary>Modbus register address (0-based).</summary>
+        public ushort ModbusAddress { get; set; }
+        /// <summary>Modbus register type: Coil, DiscreteInput, HoldingRegister, InputRegister.</summary>
+        public string ModbusRegisterType { get; set; }
+        public global::OpcDaToModbusGateway.ModbusRegisterType GetEffectiveRegisterType()
+        {
+            if (string.IsNullOrEmpty(ModbusRegisterType))
+                return global::OpcDaToModbusGateway.ModbusRegisterType.HoldingRegister;
+            switch (ModbusRegisterType.Trim().ToLowerInvariant())
+            {
+                case "coil": return global::OpcDaToModbusGateway.ModbusRegisterType.Coil;
+                case "discreteinput":
+                case "discrete": return global::OpcDaToModbusGateway.ModbusRegisterType.DiscreteInput;
+                case "holdingregister":
+                case "holding": return global::OpcDaToModbusGateway.ModbusRegisterType.HoldingRegister;
+                case "inputregister":
+                case "input": return global::OpcDaToModbusGateway.ModbusRegisterType.InputRegister;
+                default: return global::OpcDaToModbusGateway.ModbusRegisterType.HoldingRegister;
+            }
+        }
 
         /// <summary>
         /// 运行时内部唯一标识，用于在 <see cref="DataBridge"/> 和 <see cref="GatewayOpcUaServer"/>
@@ -57,18 +76,6 @@ namespace OpcDaToUaGateway.Models
         /// 已有 TagKey 的标签保持不变。新分配的 Key 会通过 ConfigManager 立即写入磁盘。</para>
         /// </summary>
         public string TagKey { get; set; }
-
-        /// <summary>
-        /// 预分配的 OPC UA NodeId 标识符（如 "DaTag_Channel1_Device0_Status"）。
-        /// 
-        /// <para>在点位浏览窗口"确定导入"时与 TagKey 一同生成并持久化到配置文件，
-        /// 启动网关时 <see cref="GatewayNodeManager.AddVariableNode"/> 直接使用此值
-        /// 构建完整的 NodeId（命名空间索引 + 此标识符），无需启动时重复计算。</para>
-        /// 
-        /// <para>空值兼容：旧配置文件或手动创建的标签可能没有此字段，
-        /// GatewayNodeManager 在 nodeId 参数为空时回退到 "DaTag_{TagKey}" 自动生成。</para>
-        /// </summary>
-        public string UaNodeId { get; set; }
 
         /// <summary>
         /// 为标签列表中尚未分配 TagKey 的标签分配唯一标识。
@@ -183,150 +190,31 @@ namespace OpcDaToUaGateway.Models
     /// 每个可选配置项都提供了 GetEffective* 方法，返回经过默认值填充后的安全值，
     /// 避免使用者需要自行处理 null 或 0 值的情况。</para>
     /// </summary>
-    public class OpcUaConfig
+    /// <summary>
+    /// Modbus TCP server configuration, corresponds to the ModbusTcp section in config.json.
+    /// </summary>
+    public class ModbusTcpConfig
     {
-        /// <summary>OPC UA 服务器名称，用于端点 URL 和服务器描述。</summary>
-        public string ServerName { get; set; }
-
-        /// <summary>监听端口（默认 4840，OPC UA 标准端口）。</summary>
         public int Port { get; set; }
-
-        /// <summary>自定义命名空间 URI，用于 UA 地址空间中的变量节点。</summary>
-        public string NamespaceUri { get; set; }
-
-        /// <summary>
-        /// 监听地址：localhost 仅允许本机访问，0.0.0.0 允许远程访问。
-        /// 默认 localhost（安全优先）。
-        /// </summary>
         public string ListenAddress { get; set; }
-
-        /// <summary>
-        /// 安全模式：None / Sign / SignAndEncrypt。
-        /// 默认 None（无安全）。生产环境建议使用 SignAndEncrypt。
-        /// </summary>
-        public string SecurityMode { get; set; }
-
-        /// <summary>
-        /// 安全策略 URI：None / Basic256Sha256 / Basic128Rsa15 / Basic256。
-        /// 仅在 <see cref="SecurityMode"/> 不为 None 时生效。
-        /// </summary>
-        public string SecurityPolicy { get; set; }
-
-        /// <summary>
-        /// 是否自动接受不受信任的客户端证书。
-        /// 默认 false（C-10 修复：安全优先），开发/测试环境可设为 true 简化连接。
-        /// </summary>
-        public bool AutoAcceptCertificates { get; set; }
-
-        /// <summary>
-        /// 最大并发会话数（默认 50），限制同时连接的 UA 客户端数量。
-        /// </summary>
-        public int MaxSessionCount { get; set; }
-
-        /// <summary>
-        /// 会话超时时间（毫秒，默认 120000 = 2 分钟），
-        /// 超过此时间无活动的会话将被服务器自动关闭。
-        /// </summary>
-        public int SessionTimeout { get; set; }
-
-        // =====================================================================
-        // GetEffective* 方法：为可选配置项提供带默认值的安全访问入口
-        // =====================================================================
-        // 设计意图：将"配置值是否有效"的判断集中在此处，
-        // 而非分散在使用配置的各个位置，减少重复的空值/零值检查代码。
-        // =====================================================================
-
-        /// <summary>
-        /// 获取有效的监听地址。
-        /// 当 <see cref="ListenAddress"/> 为空或仅包含空白时，返回默认值 "localhost"。
-        /// </summary>
-        /// <returns>经过 trim 处理的监听地址字符串。</returns>
+        public byte SlaveId { get; set; }
+        public int MaxHoldingRegisters { get; set; }
+        public int MaxCoils { get; set; }
+        public int MaxInputRegisters { get; set; }
+        public int MaxDiscreteInputs { get; set; }
         public string GetEffectiveListenAddress()
-            => string.IsNullOrWhiteSpace(ListenAddress) ? "localhost" : ListenAddress.Trim();
-
-        /// <summary>
-        /// 获取完整的 OPC UA 端点 URL（如 opc.tcp://localhost:4840/MyServer）。
-        /// 
-        /// <para>H4 修复：当 <see cref="Port"/> 为 0 或负数时，使用 OPC UA 标准端口 4840，
-        /// 避免拼出无效的端口号。</para>
-        /// </summary>
-        /// <returns>完整的 opc.tcp:// 端点 URL。</returns>
+        {
+            return string.IsNullOrEmpty(ListenAddress) ? "0.0.0.0" : ListenAddress;
+        }
+        public int GetEffectivePort()
+        {
+            return Port > 0 ? Port : 502;
+        }
         public string GetEndpointUrl()
         {
-            string host = GetEffectiveListenAddress();
-            // H4 修复：Port 为 0 或负数时使用默认值 4840（OPC UA 标准端口）
-            int port = Port > 0 ? Port : 4840;
-            return $"opc.tcp://{host}:{port}/{ServerName}";
-        }
-
-        /// <summary>
-        /// 获取有效的安全模式枚举值。
-        /// 当 <see cref="SecurityMode"/> 为空或无法识别时，返回 <see cref="MessageSecurityMode.None"/>。
-        /// </summary>
-        /// <returns>解析后的 <see cref="MessageSecurityMode"/> 枚举值。</returns>
-        public Opc.Ua.MessageSecurityMode GetEffectiveSecurityMode()
-        {
-            if (string.IsNullOrEmpty(SecurityMode)) return Opc.Ua.MessageSecurityMode.None;
-            switch (SecurityMode.Trim().ToLowerInvariant())
-            {
-                case "sign": return Opc.Ua.MessageSecurityMode.Sign;
-                case "signandencrypt": return Opc.Ua.MessageSecurityMode.SignAndEncrypt;
-                default: return Opc.Ua.MessageSecurityMode.None;
-            }
-        }
-
-        /// <summary>
-        /// 获取有效的安全策略 URI 字符串。
-        /// 当 <see cref="SecurityPolicy"/> 为空或无法识别时，返回 <see cref="SecurityPolicies.None"/>。
-        /// 
-        /// <para>支持映射的策略名：basic256sha256、basic128rsa15、basic256。</para>
-        /// </summary>
-        /// <returns>OPC UA 安全策略 URI 字符串。</returns>
-        public string GetEffectiveSecurityPolicy()
-        {
-            if (string.IsNullOrEmpty(SecurityPolicy)) return Opc.Ua.SecurityPolicies.None;
-            switch (SecurityPolicy.Trim().ToLowerInvariant())
-            {
-                case "basic256sha256": return Opc.Ua.SecurityPolicies.Basic256Sha256;
-                case "basic128rsa15": return Opc.Ua.SecurityPolicies.Basic128Rsa15;
-                case "basic256": return Opc.Ua.SecurityPolicies.Basic256;
-                default: return Opc.Ua.SecurityPolicies.None;
-            }
-        }
-
-        /// <summary>
-        /// 获取有效的最大会话数。
-        /// 当 <see cref="MaxSessionCount"/> 小于等于 0 时，返回默认值 50。
-        /// </summary>
-        /// <returns>正整数的最大会话数。</returns>
-        public int GetEffectiveMaxSessionCount()
-            => MaxSessionCount > 0 ? MaxSessionCount : 50;
-
-        /// <summary>
-        /// 获取有效的会话超时时间（毫秒）。
-        /// 当 <see cref="SessionTimeout"/> 小于等于 0 时，返回默认值 120000（2 分钟）。
-        /// </summary>
-        /// <returns>正整数的超时毫秒数。</returns>
-        public int GetEffectiveSessionTimeout()
-            => SessionTimeout > 0 ? SessionTimeout : 120000;
-
-        /// <summary>
-        /// 上次成功启动时的 OPC UA 命名空间索引。
-        /// 运行时由网关记录，用于 UA 服务器未运行时仍能导出正确的 NodeId。
-        /// 默认值 2（NS 0=OPC UA base, 1=server URI, 2=custom namespace）。
-        /// </summary>
-        public ushort NamespaceIndex { get; set; } = 2;
-
-        /// <summary>
-        /// 获取是否自动接受不受信任的客户端证书。
-        /// 
-        /// <para>C-10 修复：默认值为 false（安全优先），
-        /// 仅在配置文件中显式设为 true 时才自动接受。</para>
-        /// </summary>
-        /// <returns>AutoAcceptCertificates 的原始布尔值。</returns>
-        public bool GetEffectiveAutoAcceptCertificates()
-        {
-            return AutoAcceptCertificates;
+            int port = Port > 0 ? Port : 502;
+            string host = string.IsNullOrEmpty(ListenAddress) ? "0.0.0.0" : ListenAddress;
+            return string.Format("modbus.tcp://{0}:{1}/", host, port);
         }
     }
 
@@ -342,7 +230,7 @@ namespace OpcDaToUaGateway.Models
         public OpcDaConfig OpcDa { get; set; }
 
         /// <summary>OPC UA 服务器配置。</summary>
-        public OpcUaConfig OpcUa { get; set; }
+        public ModbusTcpConfig ModbusTcp { get; set; }
 
         /// <summary>最后一次成功连接的 OPC DA 服务器 ProgId，用于下次启动时自动填充。</summary>
         public string LastConnectedProgId { get; set; }
@@ -351,7 +239,7 @@ namespace OpcDaToUaGateway.Models
         public bool AutoConnectDa { get; set; }
 
         /// <summary>程序启动时是否自动启动 OPC UA 网关服务器。</summary>
-        public bool AutoStartUa { get; set; }
+        public bool AutoStartModbus { get; set; }
 
         /// <summary>是否随 Windows 开机自动启动（通过启动文件夹快捷方式实现）。</summary>
         public bool AutoStartWithWindows { get; set; }

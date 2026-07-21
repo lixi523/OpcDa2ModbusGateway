@@ -1,13 +1,13 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows.Forms;
 using Newtonsoft.Json;
-using OpcDaToUaGateway.Models;
+using OpcDaToModbusGateway.Models;
 
-namespace OpcDaToUaGateway.Services
+namespace OpcDaToModbusGateway.Services
 {
     /// <summary>
     /// 配置管理器 — 负责应用配置文件（config.json）的完整生命周期管理。
@@ -170,39 +170,39 @@ namespace OpcDaToUaGateway.Services
         private void ApplyBackwardCompatDefaults()
         {
             // 确保 OpcUa 配置节点存在（旧版本可能没有 UA 相关配置）
-            if (Config.OpcUa == null)
+            if (Config.ModbusTcp == null)
             {
-                Config.OpcUa = new OpcUaConfig();
+                Config.ModbusTcp = new ModbusTcpConfig();
             }
 
-            var ua = Config.OpcUa;
+            var mb = Config.ModbusTcp;
 
             // 监听地址默认 localhost — 仅本机可连接，安全性较好
-            if (string.IsNullOrEmpty(ua.ListenAddress))
-                ua.ListenAddress = "localhost";
+            if (string.IsNullOrEmpty(mb.ListenAddress))
+                mb.ListenAddress = "localhost";
 
             // 安全模式和策略默认 None — 简化初始配置，用户可按需启用加密
-            if (string.IsNullOrEmpty(ua.SecurityMode))
-                ua.SecurityMode = "None";
-            if (string.IsNullOrEmpty(ua.SecurityPolicy))
-                ua.SecurityPolicy = "None";
+            // SecurityMode removed
+                // mb.SecurityMode removed
+            // SecurityPolicy removed
+                // mb.SecurityPolicy removed
 
             // 向后兼容关键逻辑：通过检查原始 JSON 是否包含字段名来判断是"旧配置"还是"用户设置"。
             // 如果 RawJson 中没有 "AutoAcceptCertificates"，说明这是旧版本配置升级上来的，
             // 默认设为 false（不自动接受证书），要求用户显式确认后才启用，安全优先。
             // 如果 RawJson 中已有此字段，则尊重用户的原始设置（无论 true/false）。
             if (RawJson != null && !RawJson.Contains("AutoAcceptCertificates"))
-                ua.AutoAcceptCertificates = false;
+                // mb.AutoAcceptCertificates removed
 
             // 会话数上限和超时时间：0 或负数表示旧配置未设置，填充生产环境合理值
-            if (ua.MaxSessionCount <= 0)
-                ua.MaxSessionCount = 50;
-            if (ua.SessionTimeout <= 0)
-                ua.SessionTimeout = 120000;
+            // MaxSessionCount removed
+                // mb.MaxSessionCount removed
+            // SessionTimeout removed
+                // mb.SessionTimeout removed
 
             // 端口号默认 4840（OPC UA 标准端口），防止 Port 为 0 时生成无效的端点地址
-            if (ua.Port <= 0)
-                ua.Port = 4840;
+            if (mb.Port <= 0)
+                mb.Port = 4840;
 
             // 确保 OpcDa 配置节点存在
             if (Config.OpcDa == null)
@@ -431,7 +431,7 @@ namespace OpcDaToUaGateway.Services
         {
             string shortcutPath = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.Startup),
-                "OpcDaToUaGateway.lnk");
+                "OpcDaToModbusGateway.lnk");
 
             string exePath = Application.ExecutablePath;
 
@@ -478,7 +478,7 @@ namespace OpcDaToUaGateway.Services
         {
             string shortcutPath = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.Startup),
-                "OpcDaToUaGateway.lnk");
+                "OpcDaToModbusGateway.lnk");
 
             if (File.Exists(shortcutPath))
                 File.Delete(shortcutPath);

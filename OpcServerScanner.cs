@@ -5,7 +5,7 @@ using System.Runtime.InteropServices;
 using System.Threading;
 using Microsoft.Win32;
 
-namespace OpcDaToUaGateway
+namespace OpcDaToModbusGateway
 {
     /// <summary>
     /// OPC DA 服务器信息（单个已发现的服务器实例）。

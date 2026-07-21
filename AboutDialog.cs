@@ -7,7 +7,7 @@ using System.IO;
 using System.Reflection;
 using System.Windows.Forms;
 
-namespace OpcDaToUaGateway
+namespace OpcDaToModbusGateway
 {
     /// <summary>
     /// 关于对话框 - 显示程序版本、版权、技术信息、PCID 和授权码输入
@@ -129,7 +129,7 @@ namespace OpcDaToUaGateway
                 "遇到bug请联系18510086469,408738480@qq.com",
                 "技术栈:",
                 "  .NET Framework 4.7.2 (x86)",
-                "  OPC Foundation UA SDK 1.5.378.145",
+                "  NModbus4 (Modbus TCP slave library)",
                 "  TitaniumAS.Opc.Client 1.0.2",
                 "编译信息:",
                 $"  框架版本: {Environment.Version}",

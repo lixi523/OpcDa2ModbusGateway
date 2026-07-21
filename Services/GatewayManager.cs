@@ -2,20 +2,20 @@
 using System.Drawing;
 using System.Threading;
 using System.Threading.Tasks;
-using OpcDaToUaGateway.Models;
-using OpcDaToUaGateway.Services.Interfaces;
+using OpcDaToModbusGateway.Models;
+using OpcDaToModbusGateway.Services.Interfaces;
 
-namespace OpcDaToUaGateway.Services
+namespace OpcDaToModbusGateway.Services
 {
     /// <summary>
-    /// 网关管理器 — 负责 OPC DA → OPC UA 网关的完整生命周期管理。
+    /// 网关管理器 — 负责 OPC DA → Modbus TCP 网关的完整生命周期管理。
     ///
     /// == 启动流程（3 步严格有序） ==
-    ///   步骤 1: 启动 OPC UA 服务器 — 先监听端口，确保下游客户端可连接
+    ///   步骤 1: 启动 Modbus TCP 服务器 — 先监听端口，确保下游客户端可连接
     ///   步骤 2: 连接 OPC DA 服务器 — 建立到传统 DA 设备的数据通道
     ///   步骤 3: 启动数据桥接     — 将 DA 侧采集的数据实时转发至 UA 侧
     /// 启动顺序不可调换：桥接依赖 DA 和 UA 都已就绪。
-    /// 任何步骤失败时，已创建的资源按逆序回滚（bridge → daClient → uaServer），防止资源泄漏。
+    /// 任何步骤失败时，已创建的资源按逆序回滚（bridge → daClient → modbusServer），防止资源泄漏。
     ///
     /// == 优雅关闭 ==
     ///   停止时同样按依赖逆序释放：先断开桥接、再关闭 DA 客户端、最后停止 UA 服务器。
@@ -27,7 +27,7 @@ namespace OpcDaToUaGateway.Services
     ///   最多尝试 <see cref="MaxReconnectAttempts"/> 次，超过后停止重连并告警。
     ///
     /// == 线程安全策略 ==
-    ///   所有可变字段（_daClient、_uaServer、_bridge、IsRunning、_starting、_reconnectAttempts）
+    ///   所有可变字段（_daClient、_modbusServer、_bridge、IsRunning、_starting、_reconnectAttempts）
     ///   的读写均通过 <c>_lock</c>（Monitor）保护，防止 StartAsync / StopAsync / CheckHealth
     ///   在并发调用时产生竞态。局部变量在锁内捕获快照后，后续操作在锁外执行以减小锁粒度。
     /// </summary>
@@ -36,7 +36,7 @@ namespace OpcDaToUaGateway.Services
         // volatile 确保跨线程读写的可见性，配合 _lock 使用保证复合操作的原子性
         // PLAN 3.1：字段类型改为接口，使单元测试可注入 Fake 模拟器。
         private volatile IOpcDaClient _daClient;
-        private volatile IGatewayOpcUaServer _uaServer;
+        private volatile IGatewayModbusTcpServer _modbusServer;
         private volatile IDataBridge _bridge;
 
         private readonly LogManager _log;
@@ -88,7 +88,7 @@ namespace OpcDaToUaGateway.Services
         public IDataBridge Bridge => _bridge;
 
         /// <summary>当前 UA 服务器实例（只读，供导出点表等操作使用）</summary>
-        public IGatewayOpcUaServer UaServer => _uaServer;
+        public IGatewayModbusTcpServer ModbusServer => _modbusServer;
 
         /// <summary>
         /// DA 侧状态变化事件。
@@ -125,7 +125,7 @@ namespace OpcDaToUaGateway.Services
 
         /// <summary>
         /// 启动网关，按 3 步流程依次初始化各组件：
-        ///   [1/3] 创建并启动 OPC UA 服务器
+        ///   [1/3] 创建并启动 Modbus TCP 服务器
         ///   [2/3] 创建并连接 OPC DA 客户端
         ///   [3/3] 创建并启动数据桥接
         ///
@@ -146,22 +146,22 @@ namespace OpcDaToUaGateway.Services
 
             // 局部变量持有新建资源引用，启动成功后才赋值给字段；
             // 这样如果中途失败，回滚逻辑可以精确释放已创建的资源，而不影响旧运行实例
-            GatewayOpcUaServer uaServer = null;
+            GatewayModbusTcpServer modbusServer = null;
             OpcDaClient daClient = null;
             DataBridge bridge = null;
 
             try
             {
-                _log.Append("[1/3] 启动 OPC UA 服务器...");
-                uaServer = new GatewayOpcUaServer(_config.OpcUa);
-                uaServer.OnStatusChanged += msg =>
+                _log.Append("[1/3] 启动 Modbus TCP 服务器...");
+                modbusServer = new GatewayModbusTcpServer(_config.ModbusTcp);
+                modbusServer.OnStatusChanged += msg =>
                 {
                     // 调试期间不过滤，确保所有诊断信息可见
                     _log.Append("  " + msg);
                 };
                 // N-5: 当 NamespaceIndex 回写后立即触发保存，防止进程崩溃导致索引丢失
-                uaServer.OnConfigChanged = () => ConfigDirty?.Invoke();
-                await uaServer.StartAsync().ConfigureAwait(false);
+                modbusServer.OnConfigChanged = () => ConfigDirty?.Invoke();
+                await modbusServer.StartAsync().ConfigureAwait(false);
 
                 _log.Append("[2/3] 连接 OPC DA 服务器...");
                 string daHost = string.IsNullOrEmpty(_config.OpcDa.ServerHost)
@@ -176,14 +176,14 @@ namespace OpcDaToUaGateway.Services
                 daClient.Start(_config.OpcDa.UpdateRateMs, _config.OpcDa.GetEffectiveMode());
 
                 _log.Append("[3/3] 启动数据桥接...");
-                bridge = new DataBridge(daClient, uaServer, _config.OpcDa.Tags);
+                bridge = new DataBridge(daClient, modbusServer, _config.OpcDa.Tags);
                 bridge.OnLog += msg => _log.Append(msg);
-                await bridge.StartAsync(progressReport).ConfigureAwait(false);
+                bridge.Start();
 
                 // 所有步骤成功，在锁内一次性发布引用，确保外部观察者看到一致状态
                 lock (_lock)
                 {
-                    _uaServer = uaServer;
+                    _modbusServer = modbusServer;
                     _daClient = daClient;
                     _bridge = bridge;
                     IsRunning = true;
@@ -197,8 +197,8 @@ namespace OpcDaToUaGateway.Services
                 RunningStateChanged?.Invoke(true);
 
                 _log.Append("网关启动成功！");
-                _log.Append($"OPC UA 地址: {_config.OpcUa.GetEndpointUrl()}");
-                _log.Append("可以使用 UaExpert 等 OPC UA 客户端连接测试");
+                _log.Append($"Modbus TCP 地址: {_config.ModbusTcp.GetEndpointUrl()}");
+                _log.Append("可以使用 UaExpert 等 Modbus TCP 客户端连接测试");
             }
             catch (Exception ex)
             {
@@ -215,7 +215,7 @@ namespace OpcDaToUaGateway.Services
                 if (ex.InnerException != null)
                     _log.Append($"  内部异常: {ex.InnerException.GetType().Name}: {ex.InnerException.Message}");
 
-                // 回滚策略：按创建的逆序释放（bridge → daClient → uaServer），
+                // 回滚策略：按创建的逆序释放（bridge → daClient → modbusServer），
                 // 每个释放调用独立 try-catch，防止单个异常阻断后续清理。
                 // 同时重置 _starting 标志，允许用户修复问题后重试。
                 _log.Append("正在回滚已创建资源...");
@@ -223,10 +223,10 @@ namespace OpcDaToUaGateway.Services
                 RunningStateChanged?.Invoke(false);
                 try { bridge?.Dispose(); } catch { }
                 try { daClient?.Dispose(); } catch { }
-                if (uaServer != null)
+                if (modbusServer != null)
                 {
-                    try { uaServer.StopAsync().Wait(); } catch { }
-                    try { uaServer.Dispose(); } catch { }
+                    try { modbusServer.StopAsync().Wait(); } catch { }
+                    try { modbusServer.Dispose(); } catch { }
                 }
                 throw;
             }
@@ -246,7 +246,7 @@ namespace OpcDaToUaGateway.Services
         public async Task StopAsync()
         {
             IOpcDaClient daClient;
-            IGatewayOpcUaServer uaServer;
+            IGatewayModbusTcpServer modbusServer;
             IDataBridge bridge;
 
             // 在锁内原子地捕获当前引用并置空字段、标记停止。
@@ -256,25 +256,25 @@ namespace OpcDaToUaGateway.Services
                 if (!IsRunning) return;
                 IsRunning = false;
                 daClient = _daClient;
-                uaServer = _uaServer;
+                modbusServer = _modbusServer;
                 bridge = _bridge;
                 _daClient = null;
-                _uaServer = null;
+                _modbusServer = null;
                 _bridge = null;
             }
 
             _log.Append("正在停止网关...");
 
             // 每个 Dispose 独立 try-catch：即使 bridge.Dispose() 抛异常，
-            // daClient 和 uaServer 仍会被正常释放，避免级联资源泄漏
+            // daClient 和 modbusServer 仍会被正常释放，避免级联资源泄漏
             try { bridge?.Dispose(); } catch { }
             try { daClient?.Dispose(); } catch { }
 
-            if (uaServer != null)
+            if (modbusServer != null)
             {
-                try { await uaServer.StopAsync(); }
+                try { await modbusServer.StopAsync(); }
                 catch (Exception ex) { _log.Append($"停止 UA 服务器时出错: {ex.Message}"); }
-                try { uaServer.Dispose(); } catch { }
+                try { modbusServer.Dispose(); } catch { }
             }
 
             DaStatusChanged?.Invoke("● DA: 未连接", Color.Gray);

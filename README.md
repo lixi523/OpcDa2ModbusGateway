@@ -1,18 +1,18 @@
-# OPC DA → OPC UA 网关（OpcDaToUaGateway）
+# OPC DA → Modbus TCP 网关（OpcDaToModbusGateway）
 
 ![Build](https://github.com/lixi523/OpcDaToUaGateway/actions/workflows/build.yml/badge.svg)
 
-> 版本：**V1.9.0** ｜ 协议转换网关：将 OPC DA 数据源实时映射为 OPC UA 服务器，供上位 SCADA/MES/工业平台订阅。
+> 版本：**V1.9.0** ｜ 协议转换网关：将 OPC DA 数据源实时映射为 Modbus TCP 服务器，供上位 SCADA/MES/工业平台订阅。
 
 ---
 
 ## 1. 项目简介
 
-OpcDaToUaGateway 是一款运行于 Windows 的轻量级工业协议网关，解决"存量 OPC DA 设备无法直接接入现代 OPC UA 体系"的痛点：
+OpcDaToModbusGateway 是一款运行于 Windows 的轻量级工业协议网关，解决"存量 OPC DA 设备无法直接接入现代 Modbus TCP 体系"的痛点：
 
 - **输入端**：通过 OPC DA 自动发现并订阅现场标签（支持 Matrikon、Kepware、力控 pSpace OPCServer 等 DA 服务器）。
-- **输出端**：对外暴露标准 **OPC UA** 服务器（默认端口 `4840`），以 `folder/tag` 层级结构发布实时值、质量戳与时间戳。
-- **目标场景**：7×24 小时持续运行的数据采集前置机、协议转换桥接、老旧 SCADA 系统上云/接入 UA 客户端的过渡方案。
+- **输出端**：对外暴露标准 **Modbus TCP** 服务器（默认端口 `502`），将 DA 标签映射为 Modbus 寄存器地址。
+- **目标场景**：7×24 小时持续运行的数据采集前置机、协议转换桥接、老旧 SCADA 系统接入 Modbus TCP 客户端的过渡方案。
 
 ---
 
@@ -21,8 +21,8 @@ OpcDaToUaGateway 是一款运行于 Windows 的轻量级工业协议网关，解
 | 能力 | 说明 |
 |---|---|
 | OPC DA 扫描与订阅 | 自动枚举 DA 服务器/分支/标签，支持手动添加与点表批量导入导出（CSV） |
-| 数据类型转换 | 内置 `DataTypeConverter`，DA → UA 类型安全映射（见 `Models/DataTypeConverter.cs`） |
-| OPC UA 服务 | 证书自动生成与续期（`GatewayOpcUaServer.cs`），支持 Browse/Read/Subscribe |
+| 数据类型转换 | 内置 `DataTypeConverter`，DA → Modbus 类型安全映射（见 `Models/DataTypeConverter.cs`） |
+| Modbus TCP 服务 | NModbus 驱动（`GatewayModbusTcpServer.cs`），支持 Coil/DiscreteInput/HoldingRegister/InputRegister |
 | 授权管理 | `LicenseManager` 授权校验，配套 `Keygen` 工具计算授权码 |
 | 看门狗守护 | `Watchdog` 子进程心跳监护，异常退出自动拉起（60s/3 次重启保护） |
 | 健康快照 | `HealthSnapshot` 采集内存/连接状态，超标（20%/50%）告警 |
@@ -34,29 +34,29 @@ OpcDaToUaGateway 是一款运行于 Windows 的轻量级工业协议网关，解
 
 - **操作系统**：Windows 10 / 11 / Windows Server（需 .NET Framework 4.7.2 运行库）。
 - **构建环境**（开发/CI）：Windows + Visual Studio（勾选「.NET 桌面开发」工作负载）或 .NET SDK + .NET Framework 4.7.2 目标包。
-- **依赖**：OPC DA 客户端需目标 DA 服务器可访问；OPC UA 客户端需放行 `4840` 端口（或自定义端口）。
+- **依赖**：OPC DA 客户端需目标 DA 服务器可访问；Modbus TCP 客户端需放行 `502` 端口（或自定义端口）。
 
 ---
 
 ## 4. 目录结构
 
 ```
-OpcDa2Ua/
-├── OpcDaToUaGateway.sln          # 解决方案（主程序 + Keygen + Watchdog）
-├── OpcDaToUaGateway.csproj       # 主程序工程（SDK 风格 net472 WinForms）
-├── Program.cs / MainForm.cs      # 入口与主控窗体
-├── OpcDaClient.cs                # OPC DA 客户端封装
-├── GatewayOpcUaServer.cs         # OPC UA 服务器（证书/节点管理）
-├── DataBridge.cs                 # DA→UA 数据桥接
-├── OpcServerScanner.cs           # DA 服务器/标签扫描
-├── AppConstants.cs / Theme.cs    # 常量与主题
-├── Models/                       # 标签配置、数据类型转换、快照模型
-├── Services/                     # GatewayManager / LicenseManager / HealthSnapshot / LogManager / ConfigManager / WatchdogManager
-│   └── Interfaces/               # IOpcDaClient / IGatewayOpcUaServer / IDataBridge / IHealthSnapshot / FakeOpcDaClient
-├── Keygen/                       # 授权码计算工具（独立子工程）
-├── Watchdog/                     # 看门狗守护进程（独立子工程）
-├── config.json                   # 运行配置（演示配置，可改）
-└── 文档/                         # 见第 7 节
+OpcDa2Modbus/
+├── OpcDaToModbusGateway.sln          # 解决方案（主程序 + Keygen + Watchdog）
+├── OpcDaToModbusGateway.csproj       # 主程序工程（SDK 风格 net472 WinForms）
+├── Program.cs / MainForm.cs          # 入口与主控窗体
+├── OpcDaClient.cs                    # OPC DA 客户端封装
+├── GatewayModbusTcpServer.cs         # Modbus TCP 服务器
+├── DataBridge.cs                     # DA→Modbus 数据桥接
+├── OpcServerScanner.cs               # DA 服务器/标签扫描
+├── AppConstants.cs / Theme.cs        # 常量与主题
+├── Models/                           # 标签配置、数据类型转换、快照模型
+├── Services/                         # GatewayManager / LicenseManager / HealthSnapshot / LogManager / ConfigManager / WatchdogManager
+│   └── Interfaces/                   # IOpcDaClient / IGatewayModbusTcpServer / IDataBridge / IHealthSnapshot / FakeOpcDaClient
+├── Keygen/                           # 授权码计算工具（独立子工程）
+├── Watchdog/                         # 看门狗守护进程（独立子工程）
+├── config.json                       # 运行配置（演示配置，可改）
+└── 文档/                             # 见第 7 节
 ```
 
 ---
@@ -65,9 +65,9 @@ OpcDa2Ua/
 
 ### 本地构建
 ```bat
-dotnet build OpcDaToUaGateway.sln -c Release -v minimal
+dotnet build OpcDaToModbusGateway.sln -c Release -v minimal
 ```
-构建产物：`bin/Release/net472/OpcDaToUaGateway.exe`、`Keygen/bin/Release/...`、`Watchdog/bin/Release/...`。
+构建产物：`bin/Release/net472/OpcDaToModbusGateway.exe`、`Keygen/bin/Release/...`、`Watchdog/bin/Release/...`。
 
 > 详细常见报错与处理（net472 引用缺失、离线还原、x86 COM）见 [`本地编译步骤.md`](本地编译步骤.md)。
 
@@ -78,10 +78,10 @@ dotnet build OpcDaToUaGateway.sln -c Release -v minimal
 
 ## 6. 快速开始
 
-1. 运行 `bin/Release/net472/OpcDaToUaGateway.exe`。
+1. 运行 `bin/Release/net472/OpcDaToModbusGateway.exe`。
 2. 「服务器」→ 选择/扫描 OPC DA 服务器（或「手动添加」标签）。
-3. 导入/编辑点表，确认 UA 节点层级。
-4. 启动后 UA 客户端连接 `opc.tcp://<本机IP>:4840` 订阅数据。
+3. 导入/编辑点表，确认 Modbus 寄存器地址映射。
+4. 启动后 Modbus TCP 客户端连接 `<本机IP>:502` 读取寄存器数据。
 5. 授权到期前在「关于」中填入 `Keygen` 生成的授权码。
 
 完整操作、配置字段、授权与排障见 [`使用文档.md`](使用文档.md)。

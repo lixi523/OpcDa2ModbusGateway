@@ -1,6 +1,6 @@
 using System;
 
-namespace OpcDaToUaGateway.Models
+namespace OpcDaToModbusGateway.Models
 {
     /// <summary>
     /// 日聚合数据结构（持久化到 health_daily.jsonl）。

@@ -1,14 +1,14 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading;
 using Newtonsoft.Json;
-using OpcDaToUaGateway.Services.Interfaces;
-using OpcDaToUaGateway.Models;
+using OpcDaToModbusGateway.Services.Interfaces;
+using OpcDaToModbusGateway.Models;
 
-namespace OpcDaToUaGateway.Services
+namespace OpcDaToModbusGateway.Services
 {
     /// <summary>
     /// 运行状态快照采集器 — H-36 新增。
@@ -116,11 +116,11 @@ namespace OpcDaToUaGateway.Services
                     snapshot.LastUpdateTime = bridge.LastUpdateTime.ToString("yyyy-MM-dd HH:mm:ss");
                 }
 
-                if (_gateway.UaServer != null)
+                if (_gateway.ModbusServer != null)
                 {
-                    snapshot.UaVariableCount = _gateway.UaServer.VariableCount;
-                    snapshot.UaNamespaceIndex = _gateway.UaServer.NamespaceIndex;
-                    snapshot.DaTagsChildren = _gateway.UaServer.DaTagsChildrenCount;
+                    snapshot.ModbusVariableCount = _gateway.ModbusServer.VariableCount;
+                    snapshot.ModbusSlaveId = _gateway.ModbusServer.SlaveId;
+                    // snapshot.DaTagsChildren removed for Modbus
                 }
 
                 ThreadPool.GetAvailableThreads(out int workerAvail, out int ioAvail);

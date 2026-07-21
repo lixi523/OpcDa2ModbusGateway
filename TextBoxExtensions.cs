@@ -2,7 +2,7 @@ using System;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
-namespace OpcDaToUaGateway
+namespace OpcDaToModbusGateway
 {
     /// <summary>
     /// P3 修复：提取共享的 TextBox 扩展方法，消除 AboutDialog/ServerSelectionDialog 中的重复定义

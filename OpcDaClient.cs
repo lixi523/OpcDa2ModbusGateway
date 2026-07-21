@@ -7,10 +7,10 @@ using TitaniumAS.Opc.Client;
 using TitaniumAS.Opc.Client.Common;
 using TitaniumAS.Opc.Client.Da;
 using TitaniumAS.Opc.Client.Da.Browsing;
-using OpcDaToUaGateway.Models;
-using OpcDaToUaGateway.Services.Interfaces;
+using OpcDaToModbusGateway.Models;
+using OpcDaToModbusGateway.Services.Interfaces;
 
-namespace OpcDaToUaGateway
+namespace OpcDaToModbusGateway
 {
     /// <summary>
     /// OPC DA 客户端封装，负责与 OPC DA 服务器建立 COM 连接、创建订阅并接收异步数据回调。

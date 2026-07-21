@@ -4,7 +4,7 @@ using System.IO;
 using System.Threading;
 using System.Windows.Forms;
 
-namespace OpcDaToUaGateway.Services
+namespace OpcDaToModbusGateway.Services
 {
     /// <summary>
     /// 看门狗管理器 — 主进程侧的看门狗生命周期管理组件
@@ -12,7 +12,7 @@ namespace OpcDaToUaGateway.Services
     /// <remarks>
     /// <para><b>职责概述:</b></para>
     /// <para>
-    /// 本类负责从主进程侧管理外部看门狗进程 (OpcDaToUaGateway.Watchdog.exe) 的完整生命周期，
+    /// 本类负责从主进程侧管理外部看门狗进程 (OpcDaToModbusGateway.Watchdog.exe) 的完整生命周期，
     /// 包括启动、停止、心跳维持以及优雅退出协调。它是主进程与看门狗进程之间的桥梁。
     /// </para>
     ///
@@ -42,15 +42,15 @@ namespace OpcDaToUaGateway.Services
     /// 主进程（本类）与看门狗进程通过以下命名事件协作：
     /// <list type="bullet">
     ///   <item>
-    ///     <b>StopEvent</b> ("OpcDaToUaGateway_Watchdog_Stop"):
+    ///     <b>StopEvent</b> ("OpcDaToModbusGateway_Watchdog_Stop"):
     ///     由本类 <see cref="Stop"/> 方法 Set，通知看门狗退出。
     ///   </item>
     ///   <item>
-    ///     <b>HeartbeatEvent</b> ("OpcDaToUaGateway_Heartbeat"):
+    ///     <b>HeartbeatEvent</b> ("OpcDaToModbusGateway_Heartbeat"):
     ///     由本类的心跳定时器定期 Set（每 10 秒），看门狗检测并 Reset。
     ///   </item>
     ///   <item>
-    ///     <b>GracefulExitEvent</b> ("OpcDaToUaGateway_GracefulExit"):
+    ///     <b>GracefulExitEvent</b> ("OpcDaToModbusGateway_GracefulExit"):
     ///     由 <see cref="SignalGracefulExit"/> Set，看门狗检测并 Reset（消费）。
     ///   </item>
     /// </list>
@@ -70,26 +70,26 @@ namespace OpcDaToUaGateway.Services
         /// 停止事件名称 — <see cref="Stop"/> 方法通过 Set 此事件通知看门狗进程退出监控循环。
         /// 看门狗在每次循环迭代中检测此事件，收到信号后优雅退出。
         /// </summary>
-        private const string StopEventName = "OpcDaToUaGateway_Watchdog_Stop";
+        private const string StopEventName = "OpcDaToModbusGateway_Watchdog_Stop";
 
         /// <summary>
         /// 看门狗进程名（不含 .exe 扩展名），用于按名称查找和清理残留实例。
         /// </summary>
-        private const string ProcessName = "OpcDaToUaGateway.Watchdog";
+        private const string ProcessName = "OpcDaToModbusGateway.Watchdog";
 
         /// <summary>
         /// 心跳事件名称 — 主进程通过定时器每 <see cref="HeartbeatIntervalMs"/> 毫秒 Set 一次，
         /// 看门狗检测到后 Reset，形成"乒乓"协议。
         /// 看门狗若在超时阈值（30 秒 = 3 个心跳周期）内未收到信号，判定主进程挂起。
         /// </summary>
-        private const string HeartbeatEventName = "OpcDaToUaGateway_Heartbeat";
+        private const string HeartbeatEventName = "OpcDaToModbusGateway_Heartbeat";
 
         /// <summary>
         /// 优雅退出事件名称 — 当用户主动从托盘退出时，<see cref="SignalGracefulExit"/> 方法
         /// Set 此事件，告知看门狗"主进程是正常退出而非崩溃，请勿重启"。
         /// 使用 internal 可见性是因为主程序其他组件（如托盘退出逻辑）可能也需要引用此常量。
         /// </summary>
-        internal const string ExitOkEventName = "OpcDaToUaGateway_GracefulExit";
+        internal const string ExitOkEventName = "OpcDaToModbusGateway_GracefulExit";
 
         /// <summary>
         /// 心跳发送间隔 (10 秒)。
@@ -176,7 +176,7 @@ namespace OpcDaToUaGateway.Services
                     // 看门狗 EXE 固定与主程序在同一部署目录下
                     string watchdogPath = Path.Combine(
                         AppDomain.CurrentDomain.BaseDirectory,
-                        "OpcDaToUaGateway.Watchdog.exe");
+                        "OpcDaToModbusGateway.Watchdog.exe");
 
                     if (!File.Exists(watchdogPath))
                     {

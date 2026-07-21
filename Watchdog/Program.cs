@@ -1,29 +1,29 @@
 // ============================================================================
-// OpcDaToUaGateway.Watchdog — 看门狗进程 (Program.cs)
+// OpcDaToModbusGateway.Watchdog — 看门狗进程 (Program.cs)
 // ============================================================================
 //
 // 架构角色:
 //   本进程是 OPC DA→UA 网关的外部守护者，以独立进程形式运行。
-//   它的唯一职责是：持续监控主进程 (OpcDaToUaGateway.exe) 是否存活，
+//   它的唯一职责是：持续监控主进程 (OpcDaToModbusGateway.exe) 是否存活，
 //   当主进程因崩溃或挂起而异常退出时，自动将其重启，从而保证网关服务的高可用。
 //
 // 进程间通信协议 — 命名事件 (Named Events):
 //   看门狗与主进程之间通过三个 Windows 命名事件进行协调：
 //
-//   1. StopEvent ("OpcDaToUaGateway_Watchdog_Stop")
+//   1. StopEvent ("OpcDaToModbusGateway_Watchdog_Stop")
 //      - 方向: 外部 → 看门狗
 //      - 作用: 通知看门狗自身退出。当管理员或部署脚本需要完全停止网关时，
 //        先 Set 此事件让看门狗退出监控循环，再由主进程停止服务。
 //      - 模式: ManualReset（设置后保持信号状态，直到被手动 Reset）
 //
-//   2. HeartbeatEvent ("OpcDaToUaGateway_Heartbeat")
+//   2. HeartbeatEvent ("OpcDaToModbusGateway_Heartbeat")
 //      - 方向: 主进程 → 看门狗
 //      - 作用: 主进程每隔 10 秒 Set 一次此事件，表明自身仍在工作。
 //        看门狗若在 30 秒内未检测到心跳信号，则判定主进程已挂起（死锁/无响应），
 //        主动 Kill 主进程并重启。这解决了进程存在但实际已卡死的场景。
 //      - 模式: ManualReset（主进程 Set，看门狗 Reset，形成"乒乓"协议）
 //
-//   3. GracefulExitEvent ("OpcDaToUaGateway_GracefulExit")
+//   3. GracefulExitEvent ("OpcDaToModbusGateway_GracefulExit")
 //      - 方向: 主进程 → 看门狗
 //      - 作用: 用户通过托盘菜单主动退出网关时，主进程在退出前 Set 此事件。
 //        看门狗检测到该信号后，知道主进程是正常退出而非崩溃，因此不会重启主进程，
@@ -44,14 +44,14 @@
 //   若主进程在 60 秒内连续崩溃重启超过 3 次，看门狗会暂停 60 秒再尝试，
 //   避免陷入"启动即崩溃、崩溃即重启"的无限循环，浪费系统资源。
 //
-// 用法: OpcDaToUaGateway.Watchdog.exe [主程序EXE路径]
+// 用法: OpcDaToModbusGateway.Watchdog.exe [主程序EXE路径]
 // ============================================================================
 using System;
 using System.Diagnostics;
 using System.IO;
 using System.Threading;
 
-namespace OpcDaToUaGateway.Watchdog
+namespace OpcDaToModbusGateway.Watchdog
 {
     static class Program
     {
@@ -61,26 +61,26 @@ namespace OpcDaToUaGateway.Watchdog
         /// 全局互斥锁名称 — 确保系统内只有一个看门狗实例运行。
         /// 若第二个看门狗进程启动时检测到此互斥锁已存在，则立即退出。
         /// </summary>
-        private const string MutexName = "OpcDaToUaGateway_Watchdog_Mutex";
+        private const string MutexName = "OpcDaToModbusGateway_Watchdog_Mutex";
 
         /// <summary>
         /// 停止事件名称 — 外部通过 Set 此事件通知看门狗退出监控循环。
         /// 典型场景: 管理员执行 Stop() 或部署脚本需要完全停止网关。
         /// </summary>
-        private const string StopEventName = "OpcDaToUaGateway_Watchdog_Stop";
+        private const string StopEventName = "OpcDaToModbusGateway_Watchdog_Stop";
 
         /// <summary>
         /// 优雅退出事件名称 — 主进程正常退出时 Set 此事件，
         /// 看门狗检测到后知道是用户主动退出（而非崩溃），不会重启主进程。
         /// </summary>
-        private const string ExitOkEventName = "OpcDaToUaGateway_GracefulExit";
+        private const string ExitOkEventName = "OpcDaToModbusGateway_GracefulExit";
 
         /// <summary>
         /// 心跳事件名称 — 主进程定期 Set 此事件证明自身存活且响应正常。
         /// 看门狗若在 HeartbeatTimeoutMs 内未收到信号，判定主进程挂起并强制重启。
         /// 使用 ManualReset 模式：主进程 Set，看门狗 Reset，形成"乒乓"协议。
         /// </summary>
-        private const string HeartbeatEventName = "OpcDaToUaGateway_Heartbeat";
+        private const string HeartbeatEventName = "OpcDaToModbusGateway_Heartbeat";
 
         // ─── 监控参数常量 ─────────────────────────────────────────────────
 
@@ -152,7 +152,7 @@ namespace OpcDaToUaGateway.Watchdog
             else
             {
                 string watchdogDir = AppDomain.CurrentDomain.BaseDirectory;
-                mainExePath = Path.Combine(watchdogDir, "OpcDaToUaGateway.exe");
+                mainExePath = Path.Combine(watchdogDir, "OpcDaToModbusGateway.exe");
                 if (!File.Exists(mainExePath))
                 {
                     WriteLog("找不到主程序: " + mainExePath);

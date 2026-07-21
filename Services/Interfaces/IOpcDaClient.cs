@@ -1,8 +1,8 @@
 using System;
 using System.Collections.Generic;
-using OpcDaToUaGateway.Models;
+using OpcDaToModbusGateway.Models;
 
-namespace OpcDaToUaGateway.Services.Interfaces
+namespace OpcDaToModbusGateway.Services.Interfaces
 {
     /// <summary>
     /// OPC DA 客户端接口 —— 抽象出与 OPC DA 服务器建立订阅并接收数据变化的核心契约。

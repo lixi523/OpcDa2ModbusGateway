@@ -5,14 +5,14 @@ using System.Drawing;
 using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Forms;
-using OpcDaToUaGateway.Models;
-using OpcDaToUaGateway.Services;
-using OpcDaToUaGateway.Services.Interfaces;
+using OpcDaToModbusGateway.Models;
+using OpcDaToModbusGateway.Services;
+using OpcDaToModbusGateway.Services.Interfaces;
 
-namespace OpcDaToUaGateway
+namespace OpcDaToModbusGateway
 {
     /// <summary>
-    /// 主窗体 - OPC DA 到 OPC UA 网关的控制界面
+    /// 主窗体 - OPC DA 到 Modbus TCP 网关的控制界面
     /// 职责：UI 构建、用户交互、协调各 Manager
     /// </summary>
     public class MainForm : Form
@@ -28,15 +28,13 @@ namespace OpcDaToUaGateway
         private Button _btnFetchTags;
         private ComboBox _cmbListenAddress;
         private NumericUpDown _nudUaPort;
-        private ComboBox _cmbSecurityMode;
-        private CheckBox _chkAutoAcceptCerts;
-        private NumericUpDown _nudMaxSessions;
+        private NumericUpDown _nudSlaveId;
         private Label _lblEndpointUrl;
         private Button _btnStart;
         private Button _btnStop;
         private Button _btnExportTags;
         private CheckBox _chkAutoConnectDa;
-        private CheckBox _chkAutoStartUa;
+        private CheckBox _chkAutoStartModbus;
         private CheckBox _chkAutoStartWin;
         private CheckBox _chkEnableWatchdog;
         private Label _lblDaStatus;
@@ -168,16 +166,16 @@ namespace OpcDaToUaGateway
             Controls.Add(grpServer);
             y += 140;
 
-            // ---- 区域 2：OPC UA 服务器设置 ----
-            var grpUaSettings = new GroupBox
+            // ---- 区域 2：Modbus TCP 服务器设置 ----
+            var grpModbusSettings = new GroupBox
             {
-                Text = "OPC UA 服务器设置",
+                Text = "Modbus TCP 服务器设置",
                 Location = new Point(10, y),
-                Size = new Size(920, 150),
+                Size = new Size(920, 120),
                 BackColor = Theme.Surface
             };
 
-            // 第 1 行：监听地址、端口号
+            // 第 1 行：监听地址、端口号、从站 ID
             var lblListen = new Label { Text = "监听地址:", Location = new Point(15, 28), AutoSize = true };
             _cmbListenAddress = new ComboBox
             {
@@ -189,7 +187,7 @@ namespace OpcDaToUaGateway
             {
                 if (!_isLoadingConfig && Config != null)
                 {
-                    Config.OpcUa.ListenAddress = _cmbListenAddress.SelectedItem.ToString();
+                    Config.ModbusTcp.ListenAddress = _cmbListenAddress.SelectedItem.ToString();
                     UpdateEndpointUrlLabel();
                     _configMgr.Save();
                 }
@@ -198,77 +196,43 @@ namespace OpcDaToUaGateway
             var lblPort = new Label { Text = "端口号:", Location = new Point(250, 28), AutoSize = true };
             _nudUaPort = new NumericUpDown
             {
-                Location = new Point(310, 25), Size = new Size(70, 25), Minimum = 1024, Maximum = 65535, Value = 4840
+                Location = new Point(310, 25), Size = new Size(70, 25), Minimum = 1, Maximum = 65535, Value = 502
             };
             _nudUaPort.ValueChanged += (s, ev) =>
             {
                 if (!_isLoadingConfig && Config != null)
                 {
-                    Config.OpcUa.Port = (int)_nudUaPort.Value;
+                    Config.ModbusTcp.Port = (int)_nudUaPort.Value;
                     UpdateEndpointUrlLabel();
+                    _configMgr.Save();
+                }
+            };
+
+            var lblSlaveId = new Label { Text = "从站 ID:", Location = new Point(410, 28), AutoSize = true };
+            _nudSlaveId = new NumericUpDown
+            {
+                Location = new Point(470, 25), Size = new Size(60, 25), Minimum = 1, Maximum = 247, Value = 1
+            };
+            _nudSlaveId.ValueChanged += (s, ev) =>
+            {
+                if (!_isLoadingConfig && Config != null)
+                {
+                    Config.ModbusTcp.SlaveId = (byte)_nudSlaveId.Value;
                     _configMgr.Save();
                 }
             };
 
             _lblEndpointUrl = new Label
             {
-                Text = "", Location = new Point(15, 120), AutoSize = true,
+                Text = "", Location = new Point(15, 85), AutoSize = true,
                 ForeColor = Color.DodgerBlue, Font = new Font("Consolas", 9f)
             };
 
-            // 第 2 行：安全模式、连接数（端口号与连接数左对齐）
-            var lblSecMode = new Label { Text = "安全模式:", Location = new Point(15, 62), AutoSize = true };
-            _cmbSecurityMode = new ComboBox
-            {
-                Location = new Point(85, 59), Size = new Size(140, 25), DropDownStyle = ComboBoxStyle.DropDownList
-            };
-            _cmbSecurityMode.Items.AddRange(new object[] { "None", "Sign", "SignAndEncrypt" });
-            _cmbSecurityMode.SelectedIndex = 0;
-            _cmbSecurityMode.SelectedIndexChanged += (s, ev) =>
-            {
-                if (!_isLoadingConfig && Config != null)
-                {
-                    Config.OpcUa.SecurityMode = _cmbSecurityMode.SelectedItem.ToString();
-                    _configMgr.Save();
-                    // 安全警告标签已于 2026-07-15 移除，此处不再调用 UpdateSecurityWarning
-                }
-            };
-
-            var lblMaxSess = new Label { Text = "连接数:", Location = new Point(250, 62), AutoSize = true };
-            _nudMaxSessions = new NumericUpDown
-            {
-                Location = new Point(310, 59), Size = new Size(70, 25), Minimum = 1, Maximum = 500, Value = 50
-            };
-            _nudMaxSessions.ValueChanged += (s, ev) =>
-            {
-                if (!_isLoadingConfig && Config != null)
-                {
-                    Config.OpcUa.MaxSessionCount = (int)_nudMaxSessions.Value;
-                    _configMgr.Save();
-                }
-            };
-
-            // 第 3 行：自动接受客户端证书（置于「安全模式」下方的独立行，2026-07-15 调整）
-            _chkAutoAcceptCerts = new CheckBox
-            {
-                Text = "自动接受客户端证书", Location = new Point(15, 95), AutoSize = true, Checked = true
-            };
-            _chkAutoAcceptCerts.CheckedChanged += (s, ev) =>
-            {
-                if (!_isLoadingConfig && Config != null)
-                {
-                    Config.OpcUa.AutoAcceptCertificates = _chkAutoAcceptCerts.Checked;
-                    _configMgr.Save();
-                }
-            };
-
-            grpUaSettings.Controls.AddRange(new Control[] {
-                lblListen, _cmbListenAddress, lblPort, _nudUaPort, _lblEndpointUrl,
-                lblSecMode, _cmbSecurityMode, lblMaxSess, _nudMaxSessions,
-                _chkAutoAcceptCerts
+            grpModbusSettings.Controls.AddRange(new Control[] {
+                lblListen, _cmbListenAddress, lblPort, _nudUaPort, lblSlaveId, _nudSlaveId, _lblEndpointUrl
             });
-            Controls.Add(grpUaSettings);
-            y += 160;
+            Controls.Add(grpModbusSettings);
+            y += 130;
 
             // ---- 区域 3：控制面板 ----
             var grpControl = new GroupBox
@@ -304,13 +268,13 @@ namespace OpcDaToUaGateway
                 if (!_isLoadingConfig && Config != null) { Config.AutoConnectDa = _chkAutoConnectDa.Checked; _configMgr.Save(); }
             };
 
-            _chkAutoStartUa = new CheckBox
+            _chkAutoStartModbus = new CheckBox
             {
                 Text = "自动启动网关", Location = new Point(235, 50), AutoSize = true
             };
-            _chkAutoStartUa.CheckedChanged += (s, ev) =>
+            _chkAutoStartModbus.CheckedChanged += (s, ev) =>
             {
-                if (!_isLoadingConfig && Config != null) { Config.AutoStartUa = _chkAutoStartUa.Checked; _configMgr.Save(); }
+                if (!_isLoadingConfig && Config != null) { Config.AutoStartModbus = _chkAutoStartModbus.Checked; _configMgr.Save(); }
             };
 
             _chkEnableWatchdog = new CheckBox
@@ -351,7 +315,7 @@ namespace OpcDaToUaGateway
             };
 
             _lblDaStatus = new Label { Text = "● DA: 未连接", Location = new Point(410, 25), AutoSize = true, ForeColor = Color.Gray };
-            _lblUaStatus = new Label { Text = "● UA: 未启动", Location = new Point(410, 50), AutoSize = true, ForeColor = Color.Gray };
+            _lblUaStatus = new Label { Text = "● Modbus: 未启动", Location = new Point(410, 50), AutoSize = true, ForeColor = Color.Gray };
             _lblStats = new Label { Text = "更新: 0 | 错误: 0", Location = new Point(570, 50), AutoSize = true };
             _lblWatchdogStatus = new Label { Text = "● 守护: 未启动", Location = new Point(410, 75), AutoSize = true, ForeColor = Color.Gray };
             _lblLicenseStatus = new Label { Text = "● 授权: 检测中...", Location = new Point(410, 100), AutoSize = true, ForeColor = Color.Gray };
@@ -374,7 +338,7 @@ namespace OpcDaToUaGateway
             };
 
             grpControl.Controls.AddRange(new Control[] {
-                _btnStart, _btnStop, _btnExportTags, _chkAutoConnectDa, _chkAutoStartUa,
+                _btnStart, _btnStop, _btnExportTags, _chkAutoConnectDa, _chkAutoStartModbus,
                 _chkAutoStartWin, _chkEnableWatchdog, _lblDaStatus, _lblUaStatus, _lblStats,
                 _lblWatchdogStatus, _lblLicenseStatus, btnAbout
             });
@@ -511,17 +475,15 @@ namespace OpcDaToUaGateway
 
         private void UpdateEndpointUrlLabel()
         {
-            if (Config?.OpcUa == null) return;
-            _lblEndpointUrl.Text = Config.OpcUa.GetEndpointUrl();
+            if (Config?.ModbusTcp == null) return;
+            _lblEndpointUrl.Text = Config.ModbusTcp.GetEndpointUrl();
         }
 
-        private void SetUaSettingsEnabled(bool enabled)
+        private void SetModbusSettingsEnabled(bool enabled)
         {
             _cmbListenAddress.Enabled = enabled;
             _nudUaPort.Enabled = enabled;
-            _cmbSecurityMode.Enabled = enabled;
-            _chkAutoAcceptCerts.Enabled = enabled;
-            _nudMaxSessions.Enabled = enabled;
+            _nudSlaveId.Enabled = enabled;
         }
 
         /// <summary>
@@ -536,7 +498,7 @@ namespace OpcDaToUaGateway
             _btnFetchTags.Enabled = !isRunning;
             _btnExportTags.Enabled = true; // 导出在运行中也可用，启动失败和停止后也恢复
             _txtProgId.ReadOnly = isRunning;
-            SetUaSettingsEnabled(!isRunning);
+            SetModbusSettingsEnabled(!isRunning);
             // V1.9.0: 网关停止后，根据 ProgId 是否非空重新校准按钮状态
             if (!isRunning)
             {
@@ -634,7 +596,7 @@ namespace OpcDaToUaGateway
             try
             {
                 // 立即创建并显示对话框，浏览操作在对话框内后台执行
-                using (var dialog = new ItemSelectionDialog(progId, _log.Append, Config.OpcUa.NamespaceIndex))
+                using (var dialog = new ItemSelectionDialog(progId, _log.Append))
                 {
                     _btnFetchTags.Enabled = true;  // 重新启用，对话框内有自己的UI控制
                     
@@ -690,7 +652,7 @@ namespace OpcDaToUaGateway
                 _btnStop.Enabled = false;
                 _btnExportTags.Enabled = false;
                 _chkAutoConnectDa.Enabled = false;
-                _chkAutoStartUa.Enabled = false;
+                _chkAutoStartModbus.Enabled = false;
                 _chkEnableWatchdog.Enabled = false;
                 _chkAutoStartWin.Enabled = false;
                 return;
@@ -705,13 +667,13 @@ namespace OpcDaToUaGateway
             _log.Append($"  刷新频率: {Config.OpcDa.UpdateRateMs} ms");
             _log.Append($"  数据获取: {Config.OpcDa.GetEffectiveMode()}");
             _log.Append($"  标签数量: {Config.OpcDa.Tags?.Count ?? 0}");
-            _log.Append($"  OPC UA 端口: {Config.OpcUa.Port}");
-            _log.Append($"  OPC UA 监听: {Config.OpcUa.GetEffectiveListenAddress()}");
-            _log.Append($"  OPC UA 安全: {Config.OpcUa.SecurityMode ?? "None"}");
-            _log.Append($"  OPC UA 端点: {Config.OpcUa.GetEndpointUrl()}");
+            _log.Append($"  Modbus TCP 端口: {Config.ModbusTcp.Port}");
+            _log.Append($"  Modbus TCP 监听: {Config.ModbusTcp.GetEffectiveListenAddress()}");
+            _log.Append($"  Modbus TCP 安全: 无");
+            _log.Append($"  Modbus TCP 端点: {Config.ModbusTcp.GetEndpointUrl()}");
             _log.Append($"  上次连接: {Config.LastConnectedProgId ?? "无"}");
             _log.Append($"  自动连接 DA: {Config.AutoConnectDa}");
-            _log.Append($"  自动启动网关: {Config.AutoStartUa}");
+            _log.Append($"  自动启动网关: {Config.AutoStartModbus}");
             _log.Append($"  开机启动: {Config.AutoStartWithWindows}");
             _log.Append($"  进程守护: {Config.EnableWatchdog}");
 
@@ -719,18 +681,14 @@ namespace OpcDaToUaGateway
             _isLoadingConfig = true;
             _cmbDaMode.SelectedItem = Config.OpcDa.GetEffectiveMode() == DaAcquisitionMode.Sync ? "同步轮询" : "异步订阅";
             _chkAutoConnectDa.Checked = Config.AutoConnectDa;
-            _chkAutoStartUa.Checked = Config.AutoStartUa;
+            _chkAutoStartModbus.Checked = Config.AutoStartModbus;
             _chkAutoStartWin.Checked = Config.AutoStartWithWindows;
             _chkEnableWatchdog.Checked = Config.EnableWatchdog;
 
-            string listenAddr = Config.OpcUa.GetEffectiveListenAddress();
+            string listenAddr = Config.ModbusTcp.GetEffectiveListenAddress();
             _cmbListenAddress.SelectedItem = _cmbListenAddress.Items.Contains(listenAddr) ? (object)listenAddr : "localhost";
-            _nudUaPort.Value = Config.OpcUa.Port > 0 ? Config.OpcUa.Port : 4840;
-
-            string secMode = Config.OpcUa.SecurityMode ?? "None";
-            _cmbSecurityMode.SelectedItem = _cmbSecurityMode.Items.Contains(secMode) ? (object)secMode : "None";
-            _chkAutoAcceptCerts.Checked = Config.OpcUa.AutoAcceptCertificates;
-            _nudMaxSessions.Value = Config.OpcUa.GetEffectiveMaxSessionCount();
+            _nudUaPort.Value = (Config.ModbusTcp?.Port > 0) ? Config.ModbusTcp.Port : 502;
+            _nudSlaveId.Value = (Config.ModbusTcp?.SlaveId > 0) ? Config.ModbusTcp.SlaveId : 1;
             UpdateEndpointUrlLabel();
 
             _isLoadingConfig = false;
@@ -778,9 +736,10 @@ namespace OpcDaToUaGateway
                         _isLoadingConfig = true;
                         if (_configMgr.Load())
                         {
-                            string listenAddr = Config.OpcUa?.ListenAddress ?? "localhost";
+                            string listenAddr = Config.ModbusTcp?.ListenAddress ?? "localhost";
                             _cmbListenAddress.SelectedItem = _cmbListenAddress.Items.Contains(listenAddr) ? (object)listenAddr : "localhost";
-                            _nudUaPort.Value = (Config.OpcUa?.Port > 0) ? Config.OpcUa.Port : 4840;
+                            _nudUaPort.Value = (Config.ModbusTcp?.Port > 0) ? Config.ModbusTcp.Port : 502;
+                            _nudSlaveId.Value = (Config.ModbusTcp?.SlaveId > 0) ? Config.ModbusTcp.SlaveId : 1;
                             UpdateEndpointUrlLabel();
                             if (Config.OpcDa.Tags != null)
                                 UpdateTagGrid(Config.OpcDa.Tags);
@@ -817,7 +776,7 @@ namespace OpcDaToUaGateway
                 _log.Append("[守护] 已开启进程守护");
             }
 
-            if (Config.AutoStartUa && Config.OpcDa.Tags?.Count > 0)
+            if (Config.AutoStartModbus && Config.OpcDa.Tags?.Count > 0)
             {
                 _log.Append("[自动启动] 检测到自动启动选项已启用，1 秒后启动网关...");
                 _autoStartTimer = new Timer { Interval = 1000 };
@@ -965,7 +924,7 @@ namespace OpcDaToUaGateway
         }
 
         // ================================================================
-        //  导出 OPC UA 点表完整信息
+        //  导出 Modbus TCP 点表完整信息
         // ================================================================
 
         private async void BtnExportTags_Click(object sender, EventArgs e)
@@ -979,9 +938,9 @@ namespace OpcDaToUaGateway
 
             using (var sfd = new SaveFileDialog())
             {
-                sfd.Title = "导出 OPC UA 点表";
+                sfd.Title = "导出 Modbus TCP 点表";
                 sfd.Filter = "CSV 文件 (*.csv)|*.csv";
-                sfd.FileName = $"OPC_UA点表_{Config.OpcDa.ServerProgId}_{DateTime.Now:yyyyMMdd_HHmmss}.csv";
+                sfd.FileName = $"Modbus点表_{Config.OpcDa.ServerProgId}_{DateTime.Now:yyyyMMdd_HHmmss}.csv";
                 sfd.DefaultExt = "csv";
 
                 if (sfd.ShowDialog(this) == DialogResult.OK)
@@ -990,29 +949,27 @@ namespace OpcDaToUaGateway
                     try
                     {
                         int tagCount = Config.OpcDa.Tags.Count;
-                        var uaServer = _gatewayMgr?.UaServer;
-                        ushort nsIndex = (uaServer != null && uaServer.IsRunning && uaServer.NamespaceIndex > 0)
-                            ? uaServer.NamespaceIndex
-                            : ((Config.OpcUa?.NamespaceIndex > 0) ? Config.OpcUa.NamespaceIndex : (ushort)2);
-                        string nsUri = uaServer?.NamespaceUri ?? Config.OpcUa?.NamespaceUri ?? "";
-                        string endpointUrl = Config.OpcUa?.GetEndpointUrl() ?? "";
+                        var modbusServer = _gatewayMgr?.ModbusServer;
+                        ushort slaveId = (modbusServer != null && modbusServer.IsRunning && modbusServer.SlaveId > 0)
+                            ? modbusServer.SlaveId
+                            : ((ushort)1);
+                        string endpointUrl = Config.ModbusTcp?.GetEndpointUrl() ?? "";
                         var tags = Config.OpcDa.Tags;
                         string progId = Config.OpcDa.ServerProgId ?? "";
 
-                        _log.Append($"正在生成 OPC UA 点表 ({tagCount} 个点位)...");
+                        _log.Append($"正在生成 Modbus TCP 点表 ({tagCount} 个点位)...");
 
                         await Task.Run(() =>
                         {
                             var sb = new StringBuilder();
-                            sb.AppendLine("# OPC UA 点表完整信息");
+                            sb.AppendLine("# Modbus TCP 点表完整信息");
                             sb.AppendLine($"# 导出时间: {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
                             sb.AppendLine($"# DA 服务器: {progId}");
-                            sb.AppendLine($"# UA 端点: {endpointUrl}");
-                            sb.AppendLine($"# UA 命名空间 URI: {nsUri}");
-                            sb.AppendLine($"# UA 命名空间索引: {nsIndex}");
+                            sb.AppendLine($"# Modbus 端点: {endpointUrl}");
+                            sb.AppendLine($"# Modbus 从站 ID: {slaveId}");
                             sb.AppendLine($"# 点位数: {tagCount}");
                             sb.AppendLine();
-                            sb.AppendLine("序号,DA_ItemId,UA_DisplayName,UA_BrowseName,DA_DataType,UA_NodeId,UA_NamespaceUri,UA_EndpointUrl,UA_BrowsePath");
+                            sb.AppendLine("序号,DA_ItemId,DisplayName,BrowseName,DA_DataType,ModbusAddress,RegisterType,EndpointUrl,ModbusPath");
 
                             int idx = 1;
                             foreach (var tag in tags)
@@ -1021,16 +978,17 @@ namespace OpcDaToUaGateway
                                 string displayName = tag.DisplayName ?? itemId;
                                 string tagKey = tag.TagKey ?? itemId;
                                 string dataType = tag.DataType ?? "Variant";
-                                string nodeId = EscapeCsv($"ns={nsIndex};s={tag.UaNodeId ?? $"DaTag_{tagKey}"}");
-                                string browsePath = EscapeCsv(GatewayOpcUaServer.ComputeUaBrowsePath(itemId, displayName));
+                                string modbusAddress = tag.ModbusAddress.ToString();
+                                string registerType = tag.GetEffectiveRegisterType().ToString();
+                                string browsePath = EscapeCsv(GatewayModbusTcpServer.ComputeModbusPath(itemId, displayName));
 
                                 sb.Append(idx); sb.Append(',');
                                 sb.Append(EscapeCsv(itemId)); sb.Append(',');
                                 sb.Append(EscapeCsv(displayName)); sb.Append(',');
                                 sb.Append(EscapeCsv(itemId)); sb.Append(',');
                                 sb.Append(EscapeCsv(dataType)); sb.Append(',');
-                                sb.Append(nodeId); sb.Append(',');
-                                sb.Append(EscapeCsv(nsUri)); sb.Append(',');
+                                sb.Append(modbusAddress); sb.Append(',');
+                                sb.Append(registerType); sb.Append(',');
                                 sb.Append(EscapeCsv(endpointUrl)); sb.Append(',');
                                 sb.Append(browsePath);
                                 sb.AppendLine();
@@ -1040,13 +998,13 @@ namespace OpcDaToUaGateway
                             System.IO.File.WriteAllText(sfd.FileName, sb.ToString(), new UTF8Encoding(true));
                         });
 
-                        _log.Append($"OPC UA 点表已导出: {sfd.FileName} ({tagCount} 个点位)");
+                        _log.Append($"Modbus TCP 点表已导出: {sfd.FileName} ({tagCount} 个点位)");
 
                         MessageBox.Show(
-                            $"OPC UA 点表导出成功！\n" +
+                            $"Modbus TCP 点表导出成功！\n" +
                             $"文件: {sfd.FileName}\n" +
                             $"共 {tagCount} 个点位\n" +
-                            $"命名空间: ns={nsIndex} | {nsUri}",
+                            $"从站 ID: {slaveId}",
                             "导出成功", MessageBoxButtons.OK, MessageBoxIcon.Information);
                     }
                     catch (Exception ex)
@@ -1141,7 +1099,7 @@ namespace OpcDaToUaGateway
                         {
                             case 2: e.Value = snap.Value; break;
                             case 3: e.Value = snap.Quality; break;
-                            case 4: e.Value = snap.Timestamp.ToLocalTime().ToString("HH:mm:ss.fff"); break;
+                            case 4: e.Value = snap.Timestamp; break;
                         }
                     }
                     else
@@ -1180,7 +1138,7 @@ namespace OpcDaToUaGateway
         {
             Hide();
             ShowInTaskbar = false;
-            _notifyIcon.ShowBalloonTip(2000, "OPC DA → OPC UA 网关",
+            _notifyIcon.ShowBalloonTip(2000, "OPC DA → Modbus TCP 网关",
                 "程序已最小化到系统托盘，双击图标可打开主窗口。", ToolTipIcon.Info);
         }
 
