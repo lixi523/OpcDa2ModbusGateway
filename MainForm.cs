@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
+using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -27,18 +28,20 @@ namespace OpcDaToModbusGateway
         private Button _btnBrowse;
         private Button _btnFetchTags;
         private ComboBox _cmbListenAddress;
-        private NumericUpDown _nudUaPort;
+        private NumericUpDown _nudModbusPort;
         private NumericUpDown _nudSlaveId;
         private Label _lblEndpointUrl;
         private Button _btnStart;
         private Button _btnStop;
         private Button _btnExportTags;
+        private Button _btnExportMapping;
+        private Button _btnImportMapping;
         private CheckBox _chkAutoConnectDa;
         private CheckBox _chkAutoStartModbus;
         private CheckBox _chkAutoStartWin;
         private CheckBox _chkEnableWatchdog;
         private Label _lblDaStatus;
-        private Label _lblUaStatus;
+        private Label _lblModbusStatus;
         private Label _lblStats;
         private Label _lblWatchdogStatus;
         private DataGridView _dgvTags;
@@ -94,6 +97,9 @@ namespace OpcDaToModbusGateway
             Size = new Size(960, 900);
             StartPosition = FormStartPosition.CenterScreen;
             MinimumSize = new Size(800, 720);
+            FormBorderStyle = FormBorderStyle.FixedSingle;
+            MaximizeBox = false;
+            MinimizeBox = true;
             Font = new Font("Microsoft YaHei UI", 9f);
             BackColor = Theme.FormBg;
 
@@ -181,7 +187,7 @@ namespace OpcDaToModbusGateway
             {
                 Location = new Point(85, 25), Size = new Size(140, 25), DropDownStyle = ComboBoxStyle.DropDownList
             };
-            _cmbListenAddress.Items.AddRange(new object[] { "localhost", "0.0.0.0" });
+            _cmbListenAddress.Items.AddRange(new object[] { "0.0.0.0", "127.0.0.1" });
             _cmbListenAddress.SelectedIndex = 0;
             _cmbListenAddress.SelectedIndexChanged += (s, ev) =>
             {
@@ -194,15 +200,15 @@ namespace OpcDaToModbusGateway
             };
 
             var lblPort = new Label { Text = "端口号:", Location = new Point(250, 28), AutoSize = true };
-            _nudUaPort = new NumericUpDown
+            _nudModbusPort = new NumericUpDown
             {
                 Location = new Point(310, 25), Size = new Size(70, 25), Minimum = 1, Maximum = 65535, Value = 502
             };
-            _nudUaPort.ValueChanged += (s, ev) =>
-            {
-                if (!_isLoadingConfig && Config != null)
-                {
-                    Config.ModbusTcp.Port = (int)_nudUaPort.Value;
+            _nudModbusPort.ValueChanged += (s, ev) =>
+                    {
+                        if (!_isLoadingConfig && Config != null)
+                        {
+                            Config.ModbusTcp.Port = (int)_nudModbusPort.Value;
                     UpdateEndpointUrlLabel();
                     _configMgr.Save();
                 }
@@ -222,6 +228,24 @@ namespace OpcDaToModbusGateway
                 }
             };
 
+            _btnExportMapping = new Button
+            {
+                Text = "导出映射", Location = new Point(545, 25), Size = new Size(75, 25),
+                BackColor = Color.FromArgb(100, 100, 100), ForeColor = Color.White, FlatStyle = FlatStyle.Flat,
+                Cursor = Cursors.Hand
+            };
+            _btnExportMapping.FlatAppearance.BorderSize = 0;
+            _btnExportMapping.Click += BtnExportMapping_Click;
+
+            _btnImportMapping = new Button
+            {
+                Text = "导入映射", Location = new Point(625, 25), Size = new Size(75, 25),
+                BackColor = Color.FromArgb(100, 100, 100), ForeColor = Color.White, FlatStyle = FlatStyle.Flat,
+                Cursor = Cursors.Hand
+            };
+            _btnImportMapping.FlatAppearance.BorderSize = 0;
+            _btnImportMapping.Click += BtnImportMapping_Click;
+
             _lblEndpointUrl = new Label
             {
                 Text = "", Location = new Point(15, 85), AutoSize = true,
@@ -229,7 +253,8 @@ namespace OpcDaToModbusGateway
             };
 
             grpModbusSettings.Controls.AddRange(new Control[] {
-                lblListen, _cmbListenAddress, lblPort, _nudUaPort, lblSlaveId, _nudSlaveId, _lblEndpointUrl
+                lblListen, _cmbListenAddress, lblPort, _nudModbusPort, lblSlaveId, _nudSlaveId,
+                _btnExportMapping, _btnImportMapping, _lblEndpointUrl
             });
             Controls.Add(grpModbusSettings);
             y += 130;
@@ -315,7 +340,7 @@ namespace OpcDaToModbusGateway
             };
 
             _lblDaStatus = new Label { Text = "● DA: 未连接", Location = new Point(410, 25), AutoSize = true, ForeColor = Color.Gray };
-            _lblUaStatus = new Label { Text = "● Modbus: 未启动", Location = new Point(410, 50), AutoSize = true, ForeColor = Color.Gray };
+            _lblModbusStatus = new Label { Text = "● Modbus: 未启动", Location = new Point(410, 50), AutoSize = true, ForeColor = Color.Gray };
             _lblStats = new Label { Text = "更新: 0 | 错误: 0", Location = new Point(570, 50), AutoSize = true };
             _lblWatchdogStatus = new Label { Text = "● 守护: 未启动", Location = new Point(410, 75), AutoSize = true, ForeColor = Color.Gray };
             _lblLicenseStatus = new Label { Text = "● 授权: 检测中...", Location = new Point(410, 100), AutoSize = true, ForeColor = Color.Gray };
@@ -339,7 +364,7 @@ namespace OpcDaToModbusGateway
 
             grpControl.Controls.AddRange(new Control[] {
                 _btnStart, _btnStop, _btnExportTags, _chkAutoConnectDa, _chkAutoStartModbus,
-                _chkAutoStartWin, _chkEnableWatchdog, _lblDaStatus, _lblUaStatus, _lblStats,
+                _chkAutoStartWin, _chkEnableWatchdog, _lblDaStatus, _lblModbusStatus, _lblStats,
                 _lblWatchdogStatus, _lblLicenseStatus, btnAbout
             });
             Controls.Add(grpControl);
@@ -376,11 +401,16 @@ namespace OpcDaToModbusGateway
                 System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.SetProperty,
                 null, _dgvTags, new object[] { true });
 
-            _dgvTags.Columns.Add(new DataGridViewTextBoxColumn { Name = "colName", HeaderText = "标签名称", FillWeight = 25, SortMode = DataGridViewColumnSortMode.NotSortable });
-            _dgvTags.Columns.Add(new DataGridViewTextBoxColumn { Name = "colItemId", HeaderText = "ItemId", FillWeight = 30, SortMode = DataGridViewColumnSortMode.NotSortable });
-            _dgvTags.Columns.Add(new DataGridViewTextBoxColumn { Name = "colValue", HeaderText = "当前值", FillWeight = 20, SortMode = DataGridViewColumnSortMode.NotSortable });
-            _dgvTags.Columns.Add(new DataGridViewTextBoxColumn { Name = "colQuality", HeaderText = "质量", FillWeight = 10, SortMode = DataGridViewColumnSortMode.NotSortable });
-            _dgvTags.Columns.Add(new DataGridViewTextBoxColumn { Name = "colTime", HeaderText = "时间戳", FillWeight = 25, SortMode = DataGridViewColumnSortMode.NotSortable });
+            _dgvTags.Columns.Add(new DataGridViewTextBoxColumn { Name = "colName", HeaderText = "DA标签名称", FillWeight = 20, SortMode = DataGridViewColumnSortMode.NotSortable });
+            _dgvTags.Columns.Add(new DataGridViewTextBoxColumn { Name = "colItemId", HeaderText = "DA_ItemId", FillWeight = 20, SortMode = DataGridViewColumnSortMode.NotSortable });
+            _dgvTags.Columns.Add(new DataGridViewTextBoxColumn { Name = "colDaValue", HeaderText = "DA当前值", FillWeight = 15, SortMode = DataGridViewColumnSortMode.NotSortable });
+            _dgvTags.Columns.Add(new DataGridViewTextBoxColumn { Name = "colDaQuality", HeaderText = "DA质量戳", FillWeight = 10, SortMode = DataGridViewColumnSortMode.NotSortable });
+            _dgvTags.Columns.Add(new DataGridViewTextBoxColumn { Name = "colDaTime", HeaderText = "DA时间戳", FillWeight = 15, SortMode = DataGridViewColumnSortMode.NotSortable });
+            _dgvTags.Columns.Add(new DataGridViewTextBoxColumn { Name = "colMbType", HeaderText = "MB数据类型", FillWeight = 10, SortMode = DataGridViewColumnSortMode.NotSortable });
+            _dgvTags.Columns.Add(new DataGridViewTextBoxColumn { Name = "colMbAddress", HeaderText = "MB地址", FillWeight = 8, SortMode = DataGridViewColumnSortMode.NotSortable });
+            _dgvTags.Columns.Add(new DataGridViewTextBoxColumn { Name = "colMbValue", HeaderText = "MB当前值", FillWeight = 15, SortMode = DataGridViewColumnSortMode.NotSortable });
+            _dgvTags.Columns.Add(new DataGridViewTextBoxColumn { Name = "colMbQuality", HeaderText = "MB质量戳", FillWeight = 10, SortMode = DataGridViewColumnSortMode.NotSortable });
+            _dgvTags.Columns.Add(new DataGridViewTextBoxColumn { Name = "colMbTime", HeaderText = "MB时间戳", FillWeight = 15, SortMode = DataGridViewColumnSortMode.NotSortable });
 
             // 应用统一视觉主题：深蓝表头、交替行色、选中高亮、细网格线
             Theme.ApplyGridStyle(_dgvTags);
@@ -482,7 +512,7 @@ namespace OpcDaToModbusGateway
         private void SetModbusSettingsEnabled(bool enabled)
         {
             _cmbListenAddress.Enabled = enabled;
-            _nudUaPort.Enabled = enabled;
+            _nudModbusPort.Enabled = enabled;
             _nudSlaveId.Enabled = enabled;
         }
 
@@ -686,8 +716,8 @@ namespace OpcDaToModbusGateway
             _chkEnableWatchdog.Checked = Config.EnableWatchdog;
 
             string listenAddr = Config.ModbusTcp.GetEffectiveListenAddress();
-            _cmbListenAddress.SelectedItem = _cmbListenAddress.Items.Contains(listenAddr) ? (object)listenAddr : "localhost";
-            _nudUaPort.Value = (Config.ModbusTcp?.Port > 0) ? Config.ModbusTcp.Port : 502;
+            _cmbListenAddress.SelectedItem = _cmbListenAddress.Items.Contains(listenAddr) ? (object)listenAddr : "0.0.0.0";
+            _nudModbusPort.Value = (Config.ModbusTcp?.Port > 0) ? Config.ModbusTcp.Port : 502;
             _nudSlaveId.Value = (Config.ModbusTcp?.SlaveId > 0) ? Config.ModbusTcp.SlaveId : 1;
             UpdateEndpointUrlLabel();
 
@@ -705,16 +735,16 @@ namespace OpcDaToModbusGateway
             {
                 SafeInvoke(() => { _lblDaStatus.Text = text; _lblDaStatus.ForeColor = color; });
             };
-            _gatewayMgr.UaStatusChanged += (text, color) =>
+            _gatewayMgr.ModbusStatusChanged += (text, color) =>
             {
-                SafeInvoke(() => { _lblUaStatus.Text = text; _lblUaStatus.ForeColor = color; });
+                SafeInvoke(() => { _lblModbusStatus.Text = text; _lblModbusStatus.ForeColor = color; });
             };
             _watchdogMgr.StatusChanged += (text, color) =>
             {
                 SafeInvoke(() => { _lblWatchdogStatus.Text = text; _lblWatchdogStatus.ForeColor = color; });
             };
 
-            _gatewayMgr.ConfigDirty += () => _configMgr?.Save();
+            _gatewayMgr.ConfigDirty += () => _configMgr?.SaveAllImmediate();
 
             // H-40: 订阅配置文件外部修改事件
             _configMgr.ConfigFileChanged += () =>
@@ -722,7 +752,7 @@ namespace OpcDaToModbusGateway
                 if (_gatewayMgr?.IsRunning == true)
                 {
                     _log.Append("[配置] 检测到外部修改，请重启网关以应用新配置");
-                    SafeInvoke(() =>
+                    SafeBeginInvoke(() =>
                     {
                         _lblCurrentServer.Text = "(配置已变更，需重启)";
                         _lblCurrentServer.ForeColor = Color.Orange;
@@ -731,14 +761,14 @@ namespace OpcDaToModbusGateway
                 else
                 {
                     _log.Append("[配置] 网关未运行，自动应用外部修改");
-                    SafeInvoke(() =>
+                    SafeBeginInvoke(() =>
                     {
                         _isLoadingConfig = true;
                         if (_configMgr.Load())
                         {
-                            string listenAddr = Config.ModbusTcp?.ListenAddress ?? "localhost";
-                            _cmbListenAddress.SelectedItem = _cmbListenAddress.Items.Contains(listenAddr) ? (object)listenAddr : "localhost";
-                            _nudUaPort.Value = (Config.ModbusTcp?.Port > 0) ? Config.ModbusTcp.Port : 502;
+                            string listenAddr = Config.ModbusTcp?.ListenAddress ?? "0.0.0.0";
+                            _cmbListenAddress.SelectedItem = _cmbListenAddress.Items.Contains(listenAddr) ? (object)listenAddr : "0.0.0.0";
+                            _nudModbusPort.Value = (Config.ModbusTcp?.Port > 0) ? Config.ModbusTcp.Port : 502;
                             _nudSlaveId.Value = (Config.ModbusTcp?.SlaveId > 0) ? Config.ModbusTcp.SlaveId : 1;
                             UpdateEndpointUrlLabel();
                             if (Config.OpcDa.Tags != null)
@@ -962,40 +992,28 @@ namespace OpcDaToModbusGateway
                         await Task.Run(() =>
                         {
                             var sb = new StringBuilder();
-                            sb.AppendLine("# Modbus TCP 点表完整信息");
-                            sb.AppendLine($"# 导出时间: {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
-                            sb.AppendLine($"# DA 服务器: {progId}");
-                            sb.AppendLine($"# Modbus 端点: {endpointUrl}");
-                            sb.AppendLine($"# Modbus 从站 ID: {slaveId}");
-                            sb.AppendLine($"# 点位数: {tagCount}");
-                            sb.AppendLine();
-                            sb.AppendLine("序号,DA_ItemId,DisplayName,BrowseName,DA_DataType,ModbusAddress,RegisterType,EndpointUrl,ModbusPath");
+                            sb.AppendLine($"#不用改,#服务器:,{EscapeCsv(progId)},,");
+                            sb.AppendLine($"#不用改,#导出时间:,{DateTime.Now:yyyy-M-d HH:mm},,");
+                            sb.AppendLine($"#修改C3,#已选点位:,{tagCount},,");
+                            sb.AppendLine(",,,,");
+                            sb.AppendLine("序号,ItemId,DisplayName,DataType,描述");
 
                             int idx = 1;
                             foreach (var tag in tags)
                             {
                                 string itemId = tag.ItemId ?? "";
                                 string displayName = tag.DisplayName ?? itemId;
-                                string tagKey = tag.TagKey ?? itemId;
                                 string dataType = tag.DataType ?? "Variant";
-                                string modbusAddress = tag.ModbusAddress.ToString();
-                                string registerType = tag.GetEffectiveRegisterType().ToString();
-                                string browsePath = EscapeCsv(GatewayModbusTcpServer.ComputeModbusPath(itemId, displayName));
 
                                 sb.Append(idx); sb.Append(',');
                                 sb.Append(EscapeCsv(itemId)); sb.Append(',');
                                 sb.Append(EscapeCsv(displayName)); sb.Append(',');
-                                sb.Append(EscapeCsv(itemId)); sb.Append(',');
                                 sb.Append(EscapeCsv(dataType)); sb.Append(',');
-                                sb.Append(modbusAddress); sb.Append(',');
-                                sb.Append(registerType); sb.Append(',');
-                                sb.Append(EscapeCsv(endpointUrl)); sb.Append(',');
-                                sb.Append(browsePath);
                                 sb.AppendLine();
                                 idx++;
                             }
 
-                            System.IO.File.WriteAllText(sfd.FileName, sb.ToString(), new UTF8Encoding(true));
+                            System.IO.File.WriteAllText(sfd.FileName, sb.ToString(), Encoding.GetEncoding("GBK"));
                         });
 
                         _log.Append($"Modbus TCP 点表已导出: {sfd.FileName} ({tagCount} 个点位)");
@@ -1020,6 +1038,301 @@ namespace OpcDaToModbusGateway
             }
         }
 
+        // ================================================================
+        //  导出/导入 Modbus 映射（DA 标签 + Modbus 地址）
+        // ================================================================
+
+        private async void BtnExportMapping_Click(object sender, EventArgs e)
+        {
+            if (Config?.OpcDa?.Tags == null || Config.OpcDa.Tags.Count == 0)
+            {
+                MessageBox.Show("当前没有点位可导出。\n请先获取点位。",
+                    "提示", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            using (var sfd = new SaveFileDialog())
+            {
+                sfd.Title = "导出 OPC DA 到 Modbus 映射";
+                sfd.Filter = "CSV 文件 (*.csv)|*.csv";
+                sfd.FileName = $"DA_Modbus映射_{Config.OpcDa.ServerProgId}_{DateTime.Now:yyyyMMdd_HHmmss}.csv";
+                sfd.DefaultExt = "csv";
+
+                if (sfd.ShowDialog(this) == DialogResult.OK)
+                {
+                    _btnExportMapping.Enabled = false;
+                    try
+                    {
+                        int tagCount = Config.OpcDa.Tags.Count;
+                        var tags = Config.OpcDa.Tags;
+                        string progId = Config.OpcDa.ServerProgId ?? "";
+
+                        _log.Append($"正在导出 OPC DA → Modbus 映射 ({tagCount} 个点位)...");
+
+                        await Task.Run(() =>
+                        {
+                            var sb = new StringBuilder();
+                            // A1-A4 为固定格式文本，B1-B4 为固定格式文本，C 列填入变量
+                            sb.AppendLine("#不用改,OPC DA 到 Modbus TCP 映射表,,,,,");
+                            sb.AppendLine($"#不用改,导出时间:,{DateTime.Now:yyyy-MM-dd HH:mm},,,,");
+                            sb.AppendLine($"#不用改,DA 服务器:,{progId},,,,");
+                            sb.AppendLine($"#修改C4,点位数:,{tagCount},,,,");
+                            // 第5-6行为固定格式说明文本
+                            sb.AppendLine("#不用改,地址格式:,1(D0 线圈),2(DI 离散输入),3(HR 保持寄存器),4(AR 输入寄存器),");
+                            sb.AppendLine("#不用改,DA_DataType 为 OPC DA 侧类型,Modbus_DataType 为 Modbus 侧类型,,,,");
+                            sb.AppendLine(",,,,,,");
+                            sb.AppendLine("序号,DA_ItemId,DisplayName,DA_DataType,Modbus_Function,Modbus_Address,Modbus_DataType");
+
+                            int idx = 1;
+                            foreach (var tag in tags)
+                            {
+                                string itemId = tag.ItemId ?? "";
+                                string displayName = tag.DisplayName ?? itemId;
+                                string daDataType = ConvertDaDataType(tag.DataType);
+                                string mbFunction = GetModbusFunctionName(tag.GetEffectiveRegisterType());
+                                // Modbus 地址从 0 起始，导出时显示原始地址值
+                                ushort mbAddr = tag.ModbusAddress;
+                                string modbusDataType = tag.TryGetEffectiveModbusDataType(out var effMbType)
+                                    ? ConvertModbusDataType(effMbType) : "待定";
+
+                                sb.Append(EscapeCsv(MappingCsvIdentity.FormatSequence(idx, tag.TagKey))); sb.Append(',');
+                                sb.Append(EscapeCsv(itemId)); sb.Append(',');
+                                sb.Append(EscapeCsv(displayName)); sb.Append(',');
+                                sb.Append(EscapeCsv(daDataType)); sb.Append(',');
+                                sb.Append(mbFunction); sb.Append(',');
+                                sb.Append(mbAddr); sb.Append(',');
+                                sb.Append(modbusDataType);
+                                sb.AppendLine();
+                                idx++;
+                            }
+
+                            System.IO.File.WriteAllText(sfd.FileName, sb.ToString(), Encoding.GetEncoding("GBK"));
+                        });
+
+                        _log.Append($"映射表已导出: {sfd.FileName} ({tagCount} 个点位)");
+
+                        MessageBox.Show(
+                            $"映射表导出成功！\n" +
+                            $"文件: {sfd.FileName}\n" +
+                            $"共 {tagCount} 个点位",
+                            "导出成功", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    }
+                    catch (Exception ex)
+                    {
+                        MessageBox.Show($"导出失败:\n{ex.Message}", "错误",
+                            MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    }
+                    finally
+                    {
+                        _btnExportMapping.Enabled = true;
+                    }
+                }
+            }
+        }
+
+        private void BtnImportMapping_Click(object sender, EventArgs e)
+        {
+            if (Config?.OpcDa?.Tags == null || Config.OpcDa.Tags.Count == 0)
+            {
+                MessageBox.Show("当前没有点位，无法导入映射。\n请先获取点位。",
+                    "提示", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            using (var ofd = new OpenFileDialog())
+            {
+                ofd.Title = "导入 OPC DA 到 Modbus 映射";
+                ofd.Filter = "CSV 文件 (*.csv)|*.csv|所有文件 (*.*)|*.*";
+                ofd.DefaultExt = "csv";
+
+                if (ofd.ShowDialog(this) == DialogResult.OK)
+                {
+                    try
+                    {
+                        string[] lines = System.IO.File.ReadAllLines(ofd.FileName, Encoding.GetEncoding("GBK"));
+                        var importMap = new Dictionary<string, (ushort Address, string RegisterType, string ModbusDataType)>(StringComparer.OrdinalIgnoreCase);
+                        var legacyItemIds = new List<string>();
+                        bool hasNewIdentity = false;
+                        bool hasLegacyIdentity = false;
+
+                        // 解析前导行（前8行）：提取服务器名和点位数进行校验
+                        int csvTagCount = -1;
+                        string csvServerName = "";
+                        if (lines.Length > 3)
+                        {
+                            string[] line3Cols = ParseCsvLine(lines[2]);
+                            if (line3Cols.Length >= 3)
+                                csvServerName = line3Cols[2].Trim();
+                        }
+                        if (lines.Length > 4)
+                        {
+                            string[] line4Cols = ParseCsvLine(lines[3]);
+                            if (line4Cols.Length >= 3 && int.TryParse(line4Cols[2].Trim(), out int parsedCount))
+                                csvTagCount = parsedCount;
+                        }
+
+                        // 校验点位数：如果 CSV 中明确指定了数量且与当前不匹配，提示用户
+                        int currentTagCount = Config.OpcDa.Tags.Count;
+                        if (csvTagCount >= 0 && csvTagCount != currentTagCount)
+                        {
+                            var dr = MessageBox.Show(
+                                $"CSV 文件中的点位数 ({csvTagCount}) 与当前点位数 ({currentTagCount}) 不一致。\n" +
+                                $"CSV 服务器: {csvServerName}\n\n" +
+                                "是否继续导入？",
+                                "点位数校验", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+                            if (dr != DialogResult.Yes)
+                                return;
+                        }
+
+                        // 跳过前导行（前8行），从数据行开始解析
+                        int dataStartIndex = 0;
+                        for (int i = 0; i < lines.Length; i++)
+                        {
+                            string line = lines[i].Trim();
+                            // 全逗号分隔空行视为空行跳过
+                            if (string.IsNullOrEmpty(line) || string.IsNullOrWhiteSpace(line.Trim(','))) continue;
+                            if (line.StartsWith("#")) continue;
+                            // 遇到非注释非空行即为表头行或数据行开始
+                            dataStartIndex = i + 1; // 跳过表头行，从下一行开始
+                            break;
+                        }
+
+                        for (int i = dataStartIndex; i < lines.Length; i++)
+                        {
+                            string line = lines[i].Trim();
+                            // 全逗号分隔空行视为空行跳过
+                            if (string.IsNullOrEmpty(line) || string.IsNullOrWhiteSpace(line.Trim(','))) continue;
+
+                            // 列顺序: 序号,DA_ItemId,DisplayName,DA_DataType,Modbus_Function,Modbus_Address,Modbus_DataType
+                            string[] cols = ParseCsvLine(line);
+                            if (cols.Length >= 6)
+                            {
+                                string itemId = cols[1].Trim();
+                                if (!MappingCsvIdentity.TryParseSequence(cols[0], out _, out string tagKey))
+                                    throw new InvalidOperationException($"CSV 第 {i + 1} 行序号/TagKey 格式无效。");
+                                hasNewIdentity |= tagKey != null;
+                                hasLegacyIdentity |= tagKey == null;
+                                legacyItemIds.Add(itemId);
+                                string identity = tagKey ?? itemId;
+                                if (tagKey != null)
+                                {
+                                    var configured = Config.OpcDa.Tags.FirstOrDefault(t => string.Equals(t.TagKey, tagKey, StringComparison.Ordinal));
+                                    if (configured == null || !string.Equals(configured.ItemId, itemId, StringComparison.OrdinalIgnoreCase))
+                                        throw new InvalidOperationException($"CSV 第 {i + 1} 行 TagKey 与 DA_ItemId 不匹配。");
+                                }
+                                string mbFunction = cols[4].Trim();
+                                string mbAddrStr = cols[5].Trim();
+                                string mbDataType = cols.Length >= 7 ? cols[6].Trim() : "";
+
+                                var (regType, addr) = ParseModbusFunctionAndAddress(mbFunction, mbAddrStr);
+                                // 转换数据类型（Float → Single）
+                                mbDataType = ConvertImportModbusDataType(mbDataType);
+                                if (importMap.ContainsKey(identity))
+                                    throw new InvalidOperationException($"CSV 包含重复映射键 '{identity}'。");
+                                importMap.Add(identity, (addr, regType, mbDataType));
+                            }
+                        }
+
+                        if (hasNewIdentity && hasLegacyIdentity)
+                            throw new InvalidOperationException("CSV 不允许混用新旧身份格式。");
+                        if (hasLegacyIdentity)
+                            MappingCsvIdentity.ValidateLegacyItemIds(Config.OpcDa.Tags.Select(t => t.ItemId), legacyItemIds);
+
+                        if (importMap.Count == 0)
+                        {
+                            MessageBox.Show("CSV 文件中未找到有效的映射数据。",
+                                "提示", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                            return;
+                        }
+
+                        // 应用映射
+                        int matchCount = 0;
+                        foreach (var tag in Config.OpcDa.Tags)
+                        {
+                            string identity = hasNewIdentity ? tag.TagKey : tag.ItemId;
+                            if (importMap.TryGetValue(identity, out var mapping))
+                            {
+                                tag.ModbusAddress = mapping.Address;
+                                if (!string.IsNullOrEmpty(mapping.RegisterType))
+                                    tag.ModbusRegisterType = mapping.RegisterType;
+                                if (!string.IsNullOrEmpty(mapping.ModbusDataType))
+                                    tag.ModbusDataType = mapping.ModbusDataType;
+                                matchCount++;
+                            }
+                        }
+
+                        // 保存配置
+                        _configMgr.SaveTagsImmediate();
+                        _configMgr.Save();
+
+                        // 刷新显示
+                        UpdateTagGrid(Config.OpcDa.Tags);
+
+                        _log.Append($"从 CSV 导入映射: 匹配 {matchCount} / {importMap.Count} 个点位");
+
+                        MessageBox.Show(
+                            $"映射导入成功！\n" +
+                            $"CSV 共 {importMap.Count} 条映射\n" +
+                            $"匹配并更新了 {matchCount} 个点位",
+                            "导入成功", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    }
+                    catch (Exception ex)
+                    {
+                        MessageBox.Show($"导入失败:\n{ex.Message}", "错误",
+                            MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// 简易 CSV 行解析，支持双引号包裹的字段
+        /// </summary>
+        private static string[] ParseCsvLine(string line)
+        {
+            var fields = new List<string>();
+            int i = 0;
+            while (i < line.Length)
+            {
+                if (line[i] == '"')
+                {
+                    i++; // 跳过开头引号
+                    var sb = new StringBuilder();
+                    while (i < line.Length)
+                    {
+                        if (line[i] == '"')
+                        {
+                            if (i + 1 < line.Length && line[i + 1] == '"')
+                            {
+                                sb.Append('"');
+                                i += 2;
+                            }
+                            else
+                            {
+                                i++; // 跳过结尾引号
+                                break;
+                            }
+                        }
+                        else
+                        {
+                            sb.Append(line[i]);
+                            i++;
+                        }
+                    }
+                    fields.Add(sb.ToString());
+                    if (i < line.Length && line[i] == ',') i++;
+                }
+                else
+                {
+                    int start = i;
+                    while (i < line.Length && line[i] != ',') i++;
+                    fields.Add(line.Substring(start, i - start));
+                    if (i < line.Length) i++;
+                }
+            }
+            return fields.ToArray();
+        }
+
         private void RefreshStats()
         {
             if (_gatewayMgr?.Bridge == null) return;
@@ -1036,7 +1349,12 @@ namespace OpcDaToModbusGateway
                 //       确保任何一行数据变化都能触发快速刷新（1s 间隔）。
                 //       使用 XOR 聚合避免遍历中溢出，50000 行约 0.5ms。
                 foreach (var snap in _cachedSnapshots)
-                    hash ^= (snap.Value?.GetHashCode() ?? 0);
+                {
+                    hash ^= (snap.DaValue?.GetHashCode() ?? 0);
+                    hash ^= (snap.DaQuality?.GetHashCode() ?? 0);
+                    hash ^= (snap.ModbusValue?.GetHashCode() ?? 0);
+                    hash ^= (snap.ModbusStatus?.GetHashCode() ?? 0);
+                }
             }
 
             if (hash != _lastSnapshotHash)
@@ -1082,24 +1400,29 @@ namespace OpcDaToModbusGateway
 
             switch (e.ColumnIndex)
             {
-                case 0: // 标签名称
+                case 0: // DA标签名称
                     e.Value = tag.DisplayName;
                     break;
-                case 1: // ItemId
+                case 1: // DA_ItemId
                     e.Value = tag.ItemId;
                     break;
-                case 2: // 当前值
-                case 3: // 质量
-                case 4: // 时间戳
-                    // 从缓存的快照引用获取实时数据（每个刷新周期只构建一次）
+                case 2: // DA当前值
+                case 3: // DA质量戳
+                case 4: // DA时间戳
+                case 7: // MB当前值
+                case 8: // MB质量戳
+                case 9: // MB时间戳
                     if (_cachedSnapshots != null && e.RowIndex < _cachedSnapshots.Count)
                     {
                         var snap = _cachedSnapshots[e.RowIndex];
                         switch (e.ColumnIndex)
                         {
-                            case 2: e.Value = snap.Value; break;
-                            case 3: e.Value = snap.Quality; break;
-                            case 4: e.Value = snap.Timestamp; break;
+                            case 2: e.Value = snap.DaValue; break;
+                            case 3: e.Value = snap.DaQuality; break;
+                            case 4: e.Value = snap.DaTimestamp; break;
+                            case 7: e.Value = snap.ModbusValue; break;
+                            case 8: e.Value = snap.ModbusStatus; break;
+                            case 9: e.Value = snap.ModbusLastSuccessTimestamp; break;
                         }
                     }
                     else
@@ -1107,7 +1430,99 @@ namespace OpcDaToModbusGateway
                         e.Value = "-";
                     }
                     break;
+                case 5: // MB数据类型
+                    e.Value = tag.TryGetEffectiveModbusDataType(out var mbType) ? mbType : "待定";
+                    break;
+                case 6: // MB地址
+                    e.Value = FormatModbusAddress(tag.GetEffectiveRegisterType(), tag.ModbusAddress);
+                    break;
             }
+        }
+
+        /// <summary>
+        /// 将 Modbus 寄存器类型和地址格式化为标准表示法。
+        /// 格式：0x0001(线圈), 1x0001(离散输入), 3x0001(保持寄存器), 4x0001(输入寄存器)
+        /// </summary>
+        private static string FormatModbusAddress(ModbusRegisterType regType, ushort address)
+        {
+            string prefix = regType switch
+            {
+                ModbusRegisterType.Coil => "0x",
+                ModbusRegisterType.DiscreteInput => "1x",
+                ModbusRegisterType.InputRegister => "4x",
+                _ => "3x" // HoldingRegister
+            };
+            return $"{prefix}{(address + 1).ToString("D4")}";
+        }
+
+        /// <summary>
+        /// 获取 Modbus 功能码名称（用于 CSV 导出）。
+        /// </summary>
+        private static string GetModbusFunctionName(ModbusRegisterType regType)
+        {
+            return regType switch
+            {
+                ModbusRegisterType.Coil => "1(D0 线圈)",
+                ModbusRegisterType.DiscreteInput => "2(DI 离散输入)",
+                ModbusRegisterType.InputRegister => "4(AR 输入寄存器)",
+                _ => "3(HR 保持寄存器)" // HoldingRegister
+            };
+        }
+
+        /// <summary>
+        /// 转换 OPC DA 数据类型名称（Single → Float）。
+        /// </summary>
+        private static string ConvertDaDataType(string daDataType)
+        {
+            if (string.IsNullOrEmpty(daDataType)) return "Variant";
+            return daDataType.Equals("Single", StringComparison.OrdinalIgnoreCase) ? "Float" : daDataType;
+        }
+
+        /// <summary>
+        /// 转换 Modbus 数据类型名称（Single → Float）。
+        /// </summary>
+        private static string ConvertModbusDataType(string mbDataType)
+        {
+            if (string.IsNullOrEmpty(mbDataType)) return "Int16";
+            return mbDataType.Equals("Single", StringComparison.OrdinalIgnoreCase) ? "Float" : mbDataType;
+        }
+
+        /// <summary>
+        /// 转换导入的 Modbus 数据类型（Float → Single）。
+        /// </summary>
+        private static string ConvertImportModbusDataType(string mbDataType)
+        {
+            if (string.IsNullOrEmpty(mbDataType)) return "";
+            return mbDataType.Equals("Float", StringComparison.OrdinalIgnoreCase) ? "Single" : mbDataType;
+        }
+
+        /// <summary>
+        /// 解析 Modbus 功能码和地址。
+        /// 支持: "1(D0 线圈)", "2(DI 离散输入)", "3(HR 保持寄存器)", "4(AR 输入寄存器)" 或简单数字。
+        /// </summary>
+        private static (string RegisterType, ushort Address) ParseModbusFunctionAndAddress(string mbFunction, string mbAddrStr)
+        {
+            string regType = "HoldingRegister"; // 默认保持寄存器
+            ushort addr = 0;
+
+            // 解析功能码
+            if (!string.IsNullOrEmpty(mbFunction))
+            {
+                if (mbFunction.StartsWith("1") || mbFunction.Contains("线圈") || mbFunction.Contains("D0"))
+                    regType = "Coil";
+                else if (mbFunction.StartsWith("2") || mbFunction.Contains("离散输入") || mbFunction.Contains("DI"))
+                    regType = "DiscreteInput";
+                else if (mbFunction.StartsWith("3") || mbFunction.Contains("保持寄存器") || mbFunction.Contains("HR"))
+                    regType = "HoldingRegister";
+                else if (mbFunction.StartsWith("4") || mbFunction.Contains("输入寄存器") || mbFunction.Contains("AR"))
+                    regType = "InputRegister";
+            }
+
+            // 解析地址（从 0 起始）
+            if (ushort.TryParse(mbAddrStr, out ushort parsedAddr))
+                addr = parsedAddr;
+
+            return (regType, addr);
         }
 
         /// <summary>
@@ -1115,7 +1530,8 @@ namespace OpcDaToModbusGateway
         /// </summary>
         private void DgvTags_CellFormatting(object sender, DataGridViewCellFormattingEventArgs e)
         {
-            if (e.ColumnIndex == 3 && e.Value is string quality) // 质量列
+            // DA质量戳 (列3) 和 MB质量戳 (列8)
+            if ((e.ColumnIndex == 3 || e.ColumnIndex == 8) && e.Value is string quality)
             {
                 e.CellStyle.ForeColor = quality == "Good" ? Color.Green : Color.Red;
             }
@@ -1237,6 +1653,12 @@ namespace OpcDaToModbusGateway
         /// 后台事件（如 HealthSnapshot 定时器、LicenseManager 试用到期）触发 Invoke 抛
         /// ObjectDisposedException 或跨线程异常。
         /// </summary>
+        private void SafeBeginInvoke(Action a)
+        {
+            if (IsDisposed || !IsHandleCreated) return;
+            if (InvokeRequired) BeginInvoke(a); else a();
+        }
+
         private void SafeInvoke(Action a)
         {
             if (IsDisposed || !IsHandleCreated) return;

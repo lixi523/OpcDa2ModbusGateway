@@ -111,7 +111,7 @@ namespace OpcDaToModbusGateway
                     // 已有实例在运行，尝试将其窗口带到前台（方便用户找到）
                     ActivateExistingInstance();
                     MessageBox.Show(
-                        "OPC DA → OPC UA 网关已在运行中。\n请检查系统托盘或任务栏。",
+                        "OPC DA → Modbus TCP 网关已在运行中。\n请检查系统托盘或任务栏。",
                         "单实例限制", MessageBoxButtons.OK, MessageBoxIcon.Information);
                     return;
                 }

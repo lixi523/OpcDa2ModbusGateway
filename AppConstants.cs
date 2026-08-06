@@ -33,17 +33,17 @@ namespace OpcDaToModbusGateway
 
         
         // ══════════════════════════════════════════════════
-        //  OPC UA 相关
+        //  Modbus TCP 相关
         // ══════════════════════════════════════════════════
 
-        /// <summary>扁平标签批量分组大小 — 每批最多 N 个变量，超过则创建新的 Batch 子文件夹</summary>
+        /// <summary>标签批量分组大小 — 每批最多 N 个变量</summary>
         public const int ModbusFlatBatchSize = 1000;
 
-        /// <summary>命名空间索引默认值 — NS0=OPC UA base, NS1=server URI, NS2=custom</summary>
-        public const ushort ModbusDefaultSlaveId = 2;
+        /// <summary>默认 Modbus 从站 ID</summary>
+        public const ushort ModbusDefaultSlaveId = 1;
 
-        /// <summary>默认 UA 服务器端口</summary>
-        public const int ModbusDefaultPort = 4840;
+        /// <summary>默认 Modbus TCP 服务器端口</summary>
+        public const int ModbusDefaultPort = 502;
 
         // ══════════════════════════════════════════════════
         //  日志管理
@@ -108,9 +108,9 @@ namespace OpcDaToModbusGateway
         // ══════════════════════════════════════════════════
 
         /// <summary>当前软件版本</summary>
-        public const string AppVersion = "1.9.0";
+        public const string AppVersion = "2.1.0";
 
         /// <summary>窗口标题（不含版本号）</summary>
-        public const string WindowTitle = "OPC DA → OPC UA 网关";
+        public const string WindowTitle = "OPC DA → Modbus TCP 网关";
     }
 }

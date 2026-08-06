@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
@@ -8,28 +8,31 @@
     <AssemblyName>OpcDaToModbusGateway</AssemblyName>
     <StartupObject>OpcDaToModbusGateway.Program</StartupObject>
     <LangVersion>8.0</LangVersion>
-    <!-- OPC DA 服务器通常�?32 �?COM 组件，必须以 x86 运行才能正确调用 -->
+    <!-- OPC DA 服务器通常是 32 位 COM 组件，必须以 x86 运行才能正确调用 -->
     <PlatformTarget>x86</PlatformTarget>
     <ApplicationIcon>app.ico</ApplicationIcon>
     <!-- 要求以管理员权限运行：嵌入清单文件，requestedExecutionLevel=requireAdministrator -->
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Version>1.9.0</Version>
-    <AssemblyVersion>1.9.0.0</AssemblyVersion>
-    <FileVersion>1.9.0.0</FileVersion>
+    <Version>2.1.0</Version>
+    <AssemblyVersion>2.1.0.0</AssemblyVersion>
+    <FileVersion>2.1.0.0</FileVersion>
     <Company>OPC DA to Modbus Gateway</Company>
     <Product>OPC DA to Modbus TCP Gateway</Product>
-    <Description>OPC DA �?Modbus TCP 协议转换网关</Description>
+    <Description>OPC DA 到 Modbus TCP 协议转换网关</Description>
     <Copyright>Copyright © 2026</Copyright>
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- 排除 Watchdog �?Keygen 子项目自动生成的文件，避�?CS0579 重复程序集属�?-->
+    <!-- 排除 Watchdog、Keygen 和 Tests 子项目源码，避免主项目重复编译 -->
     <Compile Remove="Watchdog\**" />
     <None Remove="Watchdog\**" />
     <EmbeddedResource Remove="Watchdog\**" />
     <Compile Remove="Keygen\**" />
     <None Remove="Keygen\**" />
     <EmbeddedResource Remove="Keygen\**" />
+    <Compile Remove="Tests\**" />
+    <None Remove="Tests\**" />
+    <EmbeddedResource Remove="Tests\**" />
   </ItemGroup>
 
   <ItemGroup>
@@ -37,16 +40,16 @@
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
     <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
-    <!-- Modbus TCP 从站�?-->
+    <!-- Modbus TCP 从站库 -->
     <PackageReference Include="NModbus" Version="3.0.81" />
-    <!-- OPC DA 客户端：TitaniumAS.Opc.Client（MIT 开源，替代 Technosoftware 商业库） -->
+    <!-- OPC DA 客户端：TitaniumAS.Opc.Client（MIT 开源） -->
     <PackageReference Include="TitaniumAS.Opc.Client" Version="1.0.2" />
   </ItemGroup>
 
   <ItemGroup>
-    <!-- dynamic 关键字支持（COM Automation 接口需要）-->
+    <!-- dynamic 关键字支持（COM Automation 接口需要） -->
     <Reference Include="Microsoft.CSharp" />
-    <!-- WMI 硬件信息查询（授权码 PCID 生成需要）-->
+    <!-- WMI 硬件信息查询（授权码 PCID 生成需要） -->
     <Reference Include="System.Management" />
   </ItemGroup>
 
@@ -59,13 +62,13 @@
     </None>
   </ItemGroup>
 
-  <!-- 编译前先还原并编译看门狗项目，再将其 EXE 复制到主程序输出目录 -->
+  <!-- 编译前构建看门狗项目，并将 EXE 复制到主程序输出目录 -->
   <Target Name="BuildAndCopyWatchdog" BeforeTargets="Build">
     <Exec Command="dotnet build &quot;$(MSBuildProjectDirectory)\Watchdog\OpcDaToModbusGateway.Watchdog.csproj&quot; -c $(Configuration) -v q" />
     <Copy SourceFiles="Watchdog\bin\$(Configuration)\$(TargetFramework)\OpcDaToModbusGateway.Watchdog.exe" DestinationFolder="$(OutputPath)" SkipUnchangedFiles="true" />
   </Target>
 
-  <!-- 编译授权码生成工具并复制到主程序输出目录 -->
+  <!-- 编译授权码生成工具，并复制到主程序输出目录 -->
   <Target Name="BuildAndCopyKeygen" BeforeTargets="Build">
     <Exec Command="dotnet build &quot;$(MSBuildProjectDirectory)\Keygen\OpcDaToModbusGateway.Keygen.csproj&quot; -c $(Configuration) -v q" />
     <Copy SourceFiles="Keygen\bin\$(Configuration)\$(TargetFramework)\OpcDaToModbusGateway.Keygen.exe" DestinationFolder="$(OutputPath)" SkipUnchangedFiles="true" />

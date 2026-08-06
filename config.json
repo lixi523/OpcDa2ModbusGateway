@@ -1,33 +1,18 @@
 {
   "OpcDa": {
     "ServerProgId": "Matrikon.OPC.Simulation.1",
+    "ServerHost": null,
     "UpdateRateMs": 1000,
-    "Mode": "Async",
-    "Tags": [
-      { "ItemId": "Random.Int32", "DisplayName": "随机整数", "DataType": "Int32" },
-      { "ItemId": "Random.Real4", "DisplayName": "随机浮点数", "DataType": "Float" },
-      { "ItemId": "Random.Boolean", "DisplayName": "随机布尔值", "DataType": "Boolean" },
-      { "ItemId": "Bucket_Brigade.Int1", "DisplayName": "测试整数1", "DataType": "Int16" },
-      { "ItemId": "Bucket_Brigade.Int2", "DisplayName": "测试整数2", "DataType": "Int16" },
-      { "ItemId": "Bucket_Brigade.Real4", "DisplayName": "测试浮点1", "DataType": "Float" },
-      { "ItemId": "Bucket_Brigade.Real8", "DisplayName": "测试浮点2", "DataType": "Double" },
-      { "ItemId": "Triangle Waves.Real4", "DisplayName": "三角波", "DataType": "Float" }
-    ]
+    "Mode": "Async"
   },
-  "OpcUa": {
-    "ServerName": "OpcDaToUaGateway",
-    "Port": 4840,
-    "NamespaceUri": "http://gateway.example.com/OpcDaBridge/",
-    "ListenAddress": "localhost",
-    "SecurityMode": "None",
-    "SecurityPolicy": "None",
-    "AutoAcceptCertificates": true,
-    "MaxSessionCount": 50,
-    "SessionTimeout": 120000
+  "ModbusTcp": {
+    "Port": 502,
+    "ListenAddress": "0.0.0.0",
+    "SlaveId": 1
   },
   "LastConnectedProgId": "",
   "AutoConnectDa": false,
-  "AutoStartUa": false,
+  "AutoStartModbus": false,
   "AutoStartWithWindows": false,
   "EnableWatchdog": false,
   "AuthorizationCode": ""

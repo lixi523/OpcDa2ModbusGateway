@@ -5,7 +5,7 @@ using OpcDaToModbusGateway.Models;
 namespace OpcDaToModbusGateway.Services.Interfaces
 {
     /// <summary>
-    /// 数据桥接器接口 —— 抽象出 DA → UA 数据转发的核心契约。
+    /// 数据桥接器接口 —— 抽象出 DA → Modbus 数据转发的核心契约。
     ///
     /// 设计目的（PLAN 3.1 接口抽象）：
     /// 1. 解耦 GatewayManager 与桥接器实现，使数据流可以独立验证。
@@ -32,7 +32,7 @@ namespace OpcDaToModbusGateway.Services.Interfaces
         /// <summary>桥接器日志事件（数据转换错误、异常等）。</summary>
         event Action<string> OnLog;
 
-        /// <summary>启动数据桥接：订阅 DA 客户端的 OnDataChanged 事件并向 UA 服务器转发。</summary>
+        /// <summary>启动数据桥接：订阅 DA 客户端的 OnDataChanged 事件并向 Modbus TCP 服务器转发。</summary>
         void Start();
 
         /// <summary>获取所有标签的当前值快照（按 TagKey 构造顺序排列）。</summary>

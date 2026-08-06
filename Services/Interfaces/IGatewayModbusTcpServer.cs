@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Threading.Tasks;
 using OpcDaToModbusGateway;
+using OpcDaToModbusGateway.Models;
 
 namespace OpcDaToModbusGateway.Services.Interfaces
 {
@@ -37,9 +38,9 @@ namespace OpcDaToModbusGateway.Services.Interfaces
         Task StopAsync();
 
         /// <summary>注册一个变量节点到 Modbus 寄存器映射。tagKey 在同一实例内必须唯一�?/summary>
-        void AddVariableNode(string tagKey, ushort modbusAddress, ModbusRegisterType registerType, object initialValue);
+        void AddVariableNode(string tagKey, ushort modbusAddress, ModbusRegisterType registerType, string modbusDataType, object initialValue);
 
         /// <summary>更新 Modbus 寄存器中某个变量的值�?/summary>
-        void UpdateValue(string tagKey, object value, bool isGood, DateTime timestamp);
+        ModbusWriteResult UpdateValue(string tagKey, object value, bool isGood, DateTime timestamp);
     }
 }

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Drawing;
 using System.Threading;
 using System.Threading.Tasks;
@@ -13,12 +13,12 @@ namespace OpcDaToModbusGateway.Services
     /// == 启动流程（3 步严格有序） ==
     ///   步骤 1: 启动 Modbus TCP 服务器 — 先监听端口，确保下游客户端可连接
     ///   步骤 2: 连接 OPC DA 服务器 — 建立到传统 DA 设备的数据通道
-    ///   步骤 3: 启动数据桥接     — 将 DA 侧采集的数据实时转发至 UA 侧
-    /// 启动顺序不可调换：桥接依赖 DA 和 UA 都已就绪。
+    ///   步骤 3: 启动数据桥接     — 将 DA 侧采集的数据实时转发至 Modbus 侧
+    /// 启动顺序不可调换：桥接依赖 DA 和 Modbus TCP 都已就绪。
     /// 任何步骤失败时，已创建的资源按逆序回滚（bridge → daClient → modbusServer），防止资源泄漏。
     ///
     /// == 优雅关闭 ==
-    ///   停止时同样按依赖逆序释放：先断开桥接、再关闭 DA 客户端、最后停止 UA 服务器。
+    ///   停止时同样按依赖逆序释放：先断开桥接、再关闭 DA 客户端、最后停止 Modbus TCP 服务器。
     ///   每个 Dispose/Stop 调用都在独立的 try-catch 中执行，确保单个组件的异常不会阻断后续释放。
     ///   释放完成后通过事件通知 UI 更新状态指示器。
     ///
@@ -67,19 +67,21 @@ namespace OpcDaToModbusGateway.Services
         /// 当前累计重连尝试次数，使用 Interlocked 操作保证线程安全。
         /// 重连成功后归零，达到 <see cref="MaxReconnectAttempts"/> 后停止尝试。
         /// </summary>
-        private volatile int _reconnectAttempts;
+        private int _reconnectAttempts;
 
         /// <summary>
         /// H-34: 上次重连尝试的时间戳 (Ticks)，用于指数退避。
         /// 初始 1s，每次失败翻倍，上限 60s，通过 Interlocked 原子操作。
         /// </summary>
         private long _lastReconnectAttemptTicks;
+        private int _healthCheckFlag;
 
         /// <summary>DA 连接断开后的最大自动重连次数</summary>
         private const int MaxReconnectAttempts = 50;
 
+        private volatile bool _isRunning;
         /// <summary>获取网关当前是否处于运行状态</summary>
-        public volatile bool IsRunning;
+        public bool IsRunning => _isRunning;
 
         /// <summary>当前 DA 客户端实例（只读，供 UI 定时刷新状态使用）</summary>
         public IOpcDaClient DaClient => _daClient;
@@ -87,7 +89,7 @@ namespace OpcDaToModbusGateway.Services
         /// <summary>当前数据桥接实例（只读，供 UI 定时刷新状态使用）</summary>
         public IDataBridge Bridge => _bridge;
 
-        /// <summary>当前 UA 服务器实例（只读，供导出点表等操作使用）</summary>
+        /// <summary>当前 Modbus TCP 服务器实例（只读，供导出点表等操作使用）</summary>
         public IGatewayModbusTcpServer ModbusServer => _modbusServer;
 
         /// <summary>
@@ -97,10 +99,10 @@ namespace OpcDaToModbusGateway.Services
         public event Action<string, Color> DaStatusChanged;
 
         /// <summary>
-        /// UA 侧状态变化事件。
+        /// Modbus TCP 侧状态变化事件。
         /// 参数: (状态文本, 前景色) — UI 层直接用于更新状态标签。
         /// </summary>
-        public event Action<string, Color> UaStatusChanged;
+        public event Action<string, Color> ModbusStatusChanged;
 
         /// <summary>网关运行状态变更。UI 层用于启用/禁用控件。</summary>
         public event Action<bool> RunningStateChanged;
@@ -115,7 +117,7 @@ namespace OpcDaToModbusGateway.Services
         /// 初始化网关管理器。
         /// </summary>
         /// <param name="log">日志管理器，用于记录运行日志（不可为 null）</param>
-        /// <param name="config">应用配置，包含 DA 和 UA 的连接参数（不可为 null）</param>
+        /// <param name="config">应用配置，包含 DA 和 Modbus TCP 的连接参数（不可为 null）</param>
         /// <exception cref="ArgumentNullException">log 或 config 为 null 时抛出</exception>
         public GatewayManager(LogManager log, AppConfig config)
         {
@@ -149,9 +151,11 @@ namespace OpcDaToModbusGateway.Services
             GatewayModbusTcpServer modbusServer = null;
             OpcDaClient daClient = null;
             DataBridge bridge = null;
+            bool daConnected = false;
 
             try
             {
+                ValidateMappings(_config.OpcDa?.Tags);
                 _log.Append("[1/3] 启动 Modbus TCP 服务器...");
                 modbusServer = new GatewayModbusTcpServer(_config.ModbusTcp);
                 modbusServer.OnStatusChanged += msg =>
@@ -164,41 +168,69 @@ namespace OpcDaToModbusGateway.Services
                 await modbusServer.StartAsync().ConfigureAwait(false);
 
                 _log.Append("[2/3] 连接 OPC DA 服务器...");
-                string daHost = string.IsNullOrEmpty(_config.OpcDa.ServerHost)
-                    ? "localhost" : _config.OpcDa.ServerHost;
-                daClient = new OpcDaClient(_config.OpcDa.ServerProgId, _config.OpcDa.Tags, daHost);
-                daClient.OnStatusChanged += msg =>
+                try
                 {
-                    // 同样过滤掉诊断信息
-                    if (!msg.StartsWith("[诊断]"))
-                        _log.Append("  " + msg);
-                };
-                daClient.Start(_config.OpcDa.UpdateRateMs, _config.OpcDa.GetEffectiveMode());
+                    string daHost = string.IsNullOrEmpty(_config.OpcDa.ServerHost)
+                        ? "localhost" : _config.OpcDa.ServerHost;
+                    daClient = new OpcDaClient(_config.OpcDa.ServerProgId, _config.OpcDa.Tags, daHost);
+                    daClient.OnStatusChanged += msg =>
+                    {
+                        if (!msg.StartsWith("[诊断]"))
+                            _log.Append("  " + msg);
+                    };
+                    daClient.OnConfigChanged += () => ConfigDirty?.Invoke();
+                    daClient.Start(_config.OpcDa.UpdateRateMs, _config.OpcDa.GetEffectiveMode());
+                    daConnected = true;
+                }
+                catch (Exception daEx)
+                {
+                    // OPC DA 连接失败时不影响 Modbus TCP 服务运行：
+                    // 用户仍可使用 Modbus Poll / Modscan 验证服务器监听，DA 恢复后数据将自动流入
+                    _log.Append($"  ⚠ OPC DA 连接失败: {daEx.GetType().Name}: {daEx.Message}");
+                    _log.Append("  → Modbus TCP 服务保持运行，等待 DA 恢复后自动桥接数据");
+                    // 保留同一客户端实例，现有 DataBridge 将订阅它，健康检查可在其上重连。
+                }
 
                 _log.Append("[3/3] 启动数据桥接...");
+                // Start() 可能从 CanonicalDataType 回写真实 DA 类型，必须基于最终类型再次验证映射。
+                ValidateMappings(_config.OpcDa?.Tags);
                 bridge = new DataBridge(daClient, modbusServer, _config.OpcDa.Tags);
                 bridge.OnLog += msg => _log.Append(msg);
                 bridge.Start();
 
-                // 所有步骤成功，在锁内一次性发布引用，确保外部观察者看到一致状态
+                // 所有步骤成功（或部分成功，DA 失败但 Modbus 正常运行），在锁内一次性发布引用
                 lock (_lock)
                 {
                     _modbusServer = modbusServer;
                     _daClient = daClient;
                     _bridge = bridge;
-                    IsRunning = true;
+                    _isRunning = true;
                     _reconnectAttempts = 0;
                     _lastReconnectAttemptTicks = 0; // H-34
                     _startingFlag = 0;
                 }
 
-                DaStatusChanged?.Invoke("● DA: 已连接", Color.Green);
-                UaStatusChanged?.Invoke("● UA: 运行中", Color.Green);
+                if (daConnected)
+                {
+                    DaStatusChanged?.Invoke("● DA: 已连接", Color.Green);
+                }
+                else
+                {
+                    DaStatusChanged?.Invoke("● DA: 未连接（自动重连中）", Color.Orange);
+                }
+                ModbusStatusChanged?.Invoke("● Modbus: 运行中", Color.Green);
                 RunningStateChanged?.Invoke(true);
 
-                _log.Append("网关启动成功！");
+                if (daConnected)
+                {
+                    _log.Append("网关启动成功！");
+                }
+                else
+                {
+                    _log.Append("Modbus TCP 服务器已启动（DA 未连接，等待重连）");
+                }
                 _log.Append($"Modbus TCP 地址: {_config.ModbusTcp.GetEndpointUrl()}");
-                _log.Append("可以使用 UaExpert 等 Modbus TCP 客户端连接测试");
+                _log.Append("可以使用 Modbus Poll 等 Modbus TCP 客户端连接测试");
             }
             catch (Exception ex)
             {
@@ -234,9 +266,9 @@ namespace OpcDaToModbusGateway.Services
 
         /// <summary>
         /// 优雅停止网关，按依赖逆序释放所有组件：
-        ///   1. 释放数据桥接（切断 DA ↔ UA 数据转发）
+        ///   1. 释放数据桥接（切断 DA → Modbus 数据转发）
         ///   2. 释放 DA 客户端（断开与传统 DA 服务器的连接）
-        ///   3. 停止并释放 UA 服务器（关闭监听端口）
+        ///   3. 停止并释放 Modbus TCP 服务器（关闭监听端口）
         ///
         /// 如果网关未在运行，方法立即返回（幂等）。
         /// 每个组件的释放都在独立的 try-catch 中，确保单个异常不阻断后续清理。
@@ -253,8 +285,8 @@ namespace OpcDaToModbusGateway.Services
             // 后续操作在锁外执行：释放可能耗时，不应持锁阻塞其他调用者。
             lock (_lock)
             {
-                if (!IsRunning) return;
-                IsRunning = false;
+                if (!_isRunning) return;
+                _isRunning = false;
                 daClient = _daClient;
                 modbusServer = _modbusServer;
                 bridge = _bridge;
@@ -273,12 +305,12 @@ namespace OpcDaToModbusGateway.Services
             if (modbusServer != null)
             {
                 try { await modbusServer.StopAsync(); }
-                catch (Exception ex) { _log.Append($"停止 UA 服务器时出错: {ex.Message}"); }
+                catch (Exception ex) { _log.Append($"停止 Modbus TCP 服务器时出错: {ex.Message}"); }
                 try { modbusServer.Dispose(); } catch { }
             }
 
             DaStatusChanged?.Invoke("● DA: 未连接", Color.Gray);
-            UaStatusChanged?.Invoke("● UA: 未启动", Color.Gray);
+            ModbusStatusChanged?.Invoke("● Modbus: 未启动", Color.Gray);
             RunningStateChanged?.Invoke(false);
 
             _log.Append("网关已停止");
@@ -298,8 +330,38 @@ namespace OpcDaToModbusGateway.Services
         ///   操作过程中 daClient 可能被 StopAsync 在另一线程释放，因此必须捕获
         ///   <see cref="ObjectDisposedException"/>。
         /// </summary>
+        private static void ValidateMappings(System.Collections.Generic.IEnumerable<TagConfig> tags)
+        {
+            if (tags == null) throw new InvalidOperationException("OPC DA 标签配置不能为空。");
+            var occupied = new System.Collections.Generic.Dictionary<ModbusRegisterType, System.Collections.Generic.HashSet<int>>();
+            foreach (ModbusRegisterType type in Enum.GetValues(typeof(ModbusRegisterType)))
+                occupied[type] = new System.Collections.Generic.HashSet<int>();
+            foreach (var tag in tags)
+            {
+                try
+                {
+                    var registerType = tag.GetEffectiveRegisterType();
+                    // 类型无法解析（Variant/Object/空等）的标签按宽度 1 保守校验，
+                    // 真实类型由 DA 连接后的 CanonicalDataType 回写修正，再由回写后的校验覆盖。
+                    // String/DateTime 无 wire encoding，仍在此处显式拒绝（TryGetEffectiveAddressWidth 内部抛错）。
+                    tag.TryGetEffectiveAddressWidth(out int width);
+                    int end = tag.ModbusAddress + width - 1;
+                    if (end > ushort.MaxValue) throw new InvalidOperationException("地址空间溢出");
+                    for (int address = tag.ModbusAddress; address <= end; address++)
+                        if (!occupied[registerType].Add(address)) throw new InvalidOperationException("地址区间重叠");
+                }
+                catch (Exception ex)
+                {
+                    throw new InvalidOperationException($"标签 '{tag.TagKey ?? tag.ItemId}' 的 Modbus 映射无效: {ex.Message}", ex);
+                }
+            }
+        }
+
         public void CheckHealth()
         {
+            if (Interlocked.CompareExchange(ref _healthCheckFlag, 1, 0) != 0) return;
+            try
+            {
             IOpcDaClient daClient;
             lock (_lock)
             {
@@ -312,17 +374,18 @@ namespace OpcDaToModbusGateway.Services
             {
                 if (daClient.IsConnected) return;
 
-                // 使用 Interlocked 保证并发调用 CheckHealth 时计数器的原子递增
-                int attempts = Interlocked.Increment(ref _reconnectAttempts);
+                int completedAttempts = Volatile.Read(ref _reconnectAttempts);
 
                 // H-34: 指数退避 — 避免 DA 服务器长时间不可用时密集重连风暴
                 //       初始 1s，每次失败翻倍，上限 60s
                 long nowTicks = DateTime.UtcNow.Ticks;
                 long lastTicks = Interlocked.Read(ref _lastReconnectAttemptTicks);
-                int backoffMs = (int)Math.Min(1000L * (1L << Math.Min(attempts, 6)), 60000L);
+                int backoffMs = (int)Math.Min(1000L * (1L << Math.Min(completedAttempts, 6)), 60000L);
                 long elapsedMs = (nowTicks - lastTicks) / TimeSpan.TicksPerMillisecond;
                 if (lastTicks > 0 && elapsedMs < backoffMs) return; // 退避期间跳过
                 Interlocked.Exchange(ref _lastReconnectAttemptTicks, nowTicks);
+                // 仅真实执行重连时增加计数，退避期间不计数。
+                int attempts = Interlocked.Increment(ref _reconnectAttempts);
 
                 // H-32 修复：超过上限后立即截断，防止 int 溢出（虽然需要 ~21 亿次，但设计上不该依赖这个）。
                 // 使用 Interlocked.CompareExchange 确保截断的原子性，避免与并发 Increment 竞态。
@@ -368,6 +431,11 @@ namespace OpcDaToModbusGateway.Services
             catch (Exception ex)
             {
                 _log.Append($"[监控] 健康检查异常: {ex.Message}");
+            }
+            }
+            finally
+            {
+                Volatile.Write(ref _healthCheckFlag, 0);
             }
         }
     }

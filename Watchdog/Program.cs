@@ -3,7 +3,7 @@
 // ============================================================================
 //
 // 架构角色:
-//   本进程是 OPC DA→UA 网关的外部守护者，以独立进程形式运行。
+//   本进程是 OPC DA→Modbus TCP 网关的外部守护者，以独立进程形式运行。
 //   它的唯一职责是：持续监控主进程 (OpcDaToModbusGateway.exe) 是否存活，
 //   当主进程因崩溃或挂起而异常退出时，自动将其重启，从而保证网关服务的高可用。
 //
@@ -213,7 +213,9 @@ namespace OpcDaToModbusGateway.Watchdog
                 // 在 RapidRestartWindowMs 窗口内若重启次数超过 MaxRapidRestarts，
                 // 看门狗会暂停一个窗口时长，避免"启动即崩溃"的无限循环。
                 int rapidRestartCount = 0;
+                var restartPolicy = new WatchdogRestartPolicy();
                 DateTime lastRestartTime = DateTime.MinValue;
+                bool waitingForManualStartLogged = false;
 
                 while (true)
                 {
@@ -298,35 +300,41 @@ namespace OpcDaToModbusGateway.Watchdog
                         isRunning = false;
                     }
 
+                    bool gracefulExit = false;
                     if (!isRunning)
                     {
-                        // ── 区分"优雅退出"与"崩溃退出" ────────────────────
-                        // 主进程不存活有两种可能：
-                        //   (a) 用户主动从托盘退出 → GracefulExitEvent 已被 Set
-                        //   (b) 主进程崩溃/被终止 → GracefulExitEvent 未被 Set
-                        // 只有 (b) 才需要重启主进程。
-                        bool gracefulExit = false;
                         try
                         {
                             using (var exitOk = EventWaitHandle.OpenExisting(ExitOkEventName))
-                            {
-                                if (exitOk.WaitOne(0))
-                                {
-                                    gracefulExit = true;
-                                    // 消费信号并 Reset，为下一次启动周期做准备。
-                                    // 若不 Reset，下次主进程崩溃时看门狗会误判为优雅退出。
-                                    exitOk.Reset();
-                                    WriteLog("检测到主进程优雅退出信号（用户主动退出），不重启，继续监控");
-                                }
-                            }
+                                gracefulExit = exitOk.WaitOne(0);
                         }
-                        catch (WaitHandleCannotBeOpenedException)
-                        {
-                            // 事件不存在 = 主进程从未创建过该事件 = 不可能是优雅退出
-                        }
+                        catch (WaitHandleCannotBeOpenedException) { }
+                    }
 
-                        if (!gracefulExit)
+                    WatchdogDecision decision = restartPolicy.Evaluate(isRunning, gracefulExit);
+                    if (decision == WatchdogDecision.Rearm)
+                    {
+                        try
                         {
+                            using (var exitOk = EventWaitHandle.OpenExisting(ExitOkEventName))
+                                exitOk.Reset();
+                        }
+                        catch (WaitHandleCannotBeOpenedException) { }
+                        waitingForManualStartLogged = false;
+                        WriteLog("检测到主进程手工启动，已重新武装崩溃守护");
+                    }
+                    else if (decision == WatchdogDecision.SuppressRestart && gracefulExit)
+                    {
+                        if (!waitingForManualStartLogged)
+                        {
+                            WriteLog("检测到主进程优雅退出信号（用户主动退出），等待手工启动");
+                            waitingForManualStartLogged = true;
+                        }
+                    }
+
+                    if (decision == WatchdogDecision.Restart)
+                    {
+                            waitingForManualStartLogged = false;
                             // ── 防抖检查：避免崩溃→重启→崩溃的无限循环 ────
                             // 如果在一个时间窗口内重启次数已超过阈值，说明问题不是偶发的，
                             // 暂停一个完整窗口时长让系统/环境恢复（如等待 OPC 服务器重启）。
@@ -380,7 +388,6 @@ namespace OpcDaToModbusGateway.Watchdog
                                 WriteLog($"重启主进程失败: {ex.Message}");
                             }
                         }
-                    }
 
                     // 等待下一次检查。使用 WaitOne(CheckIntervalMs) 而非 Thread.Sleep，
                     // 这样在等待间隔期间能立即响应停止信号，保证看门狗退出延迟

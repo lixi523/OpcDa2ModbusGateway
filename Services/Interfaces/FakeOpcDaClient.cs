@@ -34,17 +34,20 @@ namespace OpcDaToModbusGateway.Services.Interfaces
         public bool IsConnected { get; set; }
 
         /// <inheritdoc />
-        public event Action<string, object, bool, DateTime> OnDataChanged;
+        public event Action<string, object, OpcQualityKind, DateTime> OnDataChanged;
 
         /// <inheritdoc />
         public event Action<string> OnStatusChanged;
+
+        /// <inheritdoc />
+        public event Action OnConfigChanged;
 
         /// <summary>已触发的数据变化总次数（便于断言）。</summary>
         public int UpdateCount { get; private set; }
 
         /// <summary>已发布的数据快照列表（按时间顺序）。</summary>
-        public List<(string tagKey, object value, bool isGood, DateTime timestamp)> PublishedData
-            = new List<(string, object, bool, DateTime)>();
+        public List<(string tagKey, object value, OpcQualityKind quality, DateTime timestamp)> PublishedData
+            = new List<(string, object, OpcQualityKind, DateTime)>();
 
         /// <summary>Start 调用次数（用于验证生命周期）。</summary>
         public int StartCount { get; private set; }
@@ -61,6 +64,7 @@ namespace OpcDaToModbusGateway.Services.Interfaces
         /// <inheritdoc />
         public void Start(int updateRateMs, DaAcquisitionMode mode)
         {
+            ThrowIfDisposed();
             Mode = mode;
             StartCount++;
             IsConnected = true;
@@ -78,6 +82,7 @@ namespace OpcDaToModbusGateway.Services.Interfaces
         /// <inheritdoc />
         public bool TryReconnect(int updateRateMs)
         {
+            ThrowIfDisposed();
             ReconnectCount++;
             IsConnected = true;
             OnStatusChanged?.Invoke($"[Fake] 模拟重连成功（第 {ReconnectCount} 次）");
@@ -87,17 +92,22 @@ namespace OpcDaToModbusGateway.Services.Interfaces
         /// <summary>测试代码手动触发一次数据变化。</summary>
         /// <param name="tagKey">标签 TagKey。</param>
         /// <param name="value">值。</param>
-        /// <param name="isGood">质量码是否 Good，默认为 true。</param>
+        /// <param name="quality">质量三态，默认为 Good。</param>
         /// <param name="timestamp">时间戳，默认当前本地时间。</param>
-        public void RaiseDataChanged(string tagKey, object value, bool isGood = true, DateTime? timestamp = null)
+        public void RaiseDataChanged(string tagKey, object value, OpcQualityKind quality = OpcQualityKind.Good, DateTime? timestamp = null)
         {
-            if (Interlocked.Exchange(ref _disposedInt, 0) != 0)
-                throw new ObjectDisposedException(nameof(FakeOpcDaClient));
+            ThrowIfDisposed();
 
             var ts = timestamp ?? DateTime.Now;
             UpdateCount++;
-            PublishedData.Add((tagKey, value, isGood, ts));
-            OnDataChanged?.Invoke(tagKey, value, isGood, ts);
+            PublishedData.Add((tagKey, value, quality, ts));
+            OnDataChanged?.Invoke(tagKey, value, quality, ts);
+        }
+
+        /// <summary>测试代码手动触发配置变更事件。</summary>
+        public void RaiseConfigChanged()
+        {
+            OnConfigChanged?.Invoke();
         }
 
         /// <summary>测试代码手动触发断连事件。</summary>
@@ -114,6 +124,12 @@ namespace OpcDaToModbusGateway.Services.Interfaces
             OnStatusChanged?.Invoke(message);
         }
 
+        private void ThrowIfDisposed()
+        {
+            if (Volatile.Read(ref _disposedInt) != 0)
+                throw new ObjectDisposedException(nameof(FakeOpcDaClient));
+        }
+
         /// <inheritdoc />
         public void Dispose()
         {
@@ -123,6 +139,7 @@ namespace OpcDaToModbusGateway.Services.Interfaces
                 // 清空事件订阅者，防止测试间状态泄漏
                 OnDataChanged = null;
                 OnStatusChanged = null;
+                OnConfigChanged = null;
                 PublishedData.Clear();
             }
         }

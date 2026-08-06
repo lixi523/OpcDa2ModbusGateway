@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
@@ -25,6 +25,7 @@ namespace OpcDaToModbusGateway
         public string TagKey { get; set; }
         public ushort Address { get; set; }
         public ModbusRegisterType RegisterType { get; set; }
+        public string ModbusDataType { get; set; }
         public object LastValue { get; set; }
         public DateTime LastTimestamp { get; set; }
     }
@@ -35,8 +36,10 @@ namespace OpcDaToModbusGateway
         private IModbusTcpSlaveNetwork _network;
         private DefaultSlaveDataStore _dataStore;
         private readonly Dictionary<string, ModbusTagMapping> _tagMap = new Dictionary<string, ModbusTagMapping>();
+        private readonly object _lock = new object();
         private volatile bool _isRunning;
         private int _disposedInt;
+        private CancellationTokenSource _cts;
 
         public event Action<string> OnStatusChanged;
         public Action OnConfigChanged { get; set; }
@@ -53,26 +56,45 @@ namespace OpcDaToModbusGateway
         {
             if (_isRunning) return;
 
+            TcpListener listener = null;
             try
             {
                 byte slaveId = _config.SlaveId > 0 ? _config.SlaveId : (byte)1;
                 string listenAddress = string.IsNullOrEmpty(_config.ListenAddress) ? "0.0.0.0" : _config.ListenAddress;
                 int port = _config.Port > 0 ? _config.Port : 502;
 
+                // 先尝试释放可能残留的 TIME_WAIT 占用 — 使用 TcpListener 显式指定 ExclusiveAddressUse=false
+                // 502 端口是知名端口，旧进程释放后可能仍在 TIME_WAIT 状态，没有 SO_REUSEADDR 会绑定失败
+                listener = new TcpListener(IPAddress.Parse(listenAddress), port)
+                {
+                    ExclusiveAddressUse = false
+                };
+                listener.Start();
                 var factory = new ModbusFactory();
                 _dataStore = new DefaultSlaveDataStore();
                 var slave = factory.CreateSlave(slaveId, _dataStore);
-                var listener = new TcpListener(IPAddress.Parse(listenAddress), port);
-                _network = (IModbusTcpSlaveNetwork)factory.CreateSlaveNetwork(listener);
+                _network = factory.CreateSlaveNetwork(listener);
+                listener = null; // ownership transferred to the slave network
                 _network.AddSlave(slave);
-                _network.ListenAsync();
+
+                _cts = new CancellationTokenSource();
+                // NModbus 3.x 的 ListenAsync 内部启动后台任务接收客户端，无需 await；
+                // 此处不 await 避免阻塞 StartAsync，异常会被 ListenAsync 内部吞掉
+                _ = _network.ListenAsync(_cts.Token);
                 _isRunning = true;
 
                 OnStatusChanged?.Invoke($"Modbus TCP server started on {listenAddress}:{port}, slaveId={slaveId}");
             }
             catch (Exception ex)
             {
-                OnStatusChanged?.Invoke($"Failed to start Modbus TCP server: {ex.Message}");
+                listener?.Stop();
+                _cts?.Dispose();
+                _cts = null;
+                _network?.Dispose();
+                _network = null;
+                _dataStore = null;
+                _isRunning = false;
+                OnStatusChanged?.Invoke($"Failed to start Modbus TCP server: {ex.GetType().Name}: {ex.Message}");
                 throw;
             }
         }
@@ -82,6 +104,9 @@ namespace OpcDaToModbusGateway
             if (!_isRunning) return Task.CompletedTask;
             try
             {
+                _cts?.Cancel();
+                _cts?.Dispose();
+                _cts = null;
                 _network?.Dispose();
                 _network = null;
                 _isRunning = false;
@@ -94,33 +119,63 @@ namespace OpcDaToModbusGateway
             return Task.CompletedTask;
         }
 
-        public void AddVariableNode(string tagKey, ushort modbusAddress, ModbusRegisterType registerType, object initialValue)
+        public void AddVariableNode(string tagKey, ushort modbusAddress, ModbusRegisterType registerType, string modbusDataType, object initialValue)
         {
-            _tagMap[tagKey] = new ModbusTagMapping
+            lock (_lock)
             {
-                TagKey = tagKey,
-                Address = modbusAddress,
-                RegisterType = registerType,
-                LastValue = initialValue,
-                LastTimestamp = DateTime.UtcNow
-            };
-        }
-
-        public void UpdateValue(string tagKey, object value, bool isGood, DateTime timestamp)
-        {
-            if (!isGood || _dataStore == null) return;
-            if (!_tagMap.TryGetValue(tagKey, out var mapping)) return;
-
-            try
-            {
-                WriteToRegister(mapping.Address, mapping.RegisterType, value);
-                mapping.LastValue = value;
-                mapping.LastTimestamp = timestamp;
+                _tagMap[tagKey] = new ModbusTagMapping
+                {
+                    TagKey = tagKey,
+                    Address = modbusAddress,
+                    RegisterType = registerType,
+                    ModbusDataType = DataTypeConverter.NormalizeModbusDataType(modbusDataType),
+                    LastValue = initialValue,
+                    LastTimestamp = DateTime.UtcNow
+                };
             }
-            catch { }
         }
 
-        private void WriteToRegister(ushort address, ModbusRegisterType registerType, object value)
+        public ModbusWriteResult UpdateValue(string tagKey, object value, bool isGood, DateTime timestamp)
+        {
+            if (!isGood) return ModbusWriteResult.Failed(ModbusWriteStatus.BadQuality);
+            lock (_lock)
+            {
+                if (!_isRunning || _dataStore == null)
+                    return ModbusWriteResult.Failed(ModbusWriteStatus.NotRunning);
+                if (!_tagMap.TryGetValue(tagKey, out var mapping))
+                    return ModbusWriteResult.Failed(ModbusWriteStatus.NotMapped);
+
+                try
+                {
+                    WriteToRegister(mapping.Address, mapping.RegisterType, mapping.ModbusDataType, value);
+                    mapping.LastValue = value;
+                    mapping.LastTimestamp = timestamp;
+                    return ModbusWriteResult.Succeeded();
+                }
+                catch (FormatException ex)
+                {
+                    return ModbusWriteResult.Failed(ModbusWriteStatus.EncodingError, ex.Message);
+                }
+                catch (OverflowException ex)
+                {
+                    return ModbusWriteResult.Failed(ModbusWriteStatus.EncodingError, ex.Message);
+                }
+                catch (InvalidCastException ex)
+                {
+                    return ModbusWriteResult.Failed(ModbusWriteStatus.EncodingError, ex.Message);
+                }
+                catch (NotSupportedException ex)
+                {
+                    return ModbusWriteResult.Failed(ModbusWriteStatus.EncodingError, ex.Message);
+                }
+                catch (Exception ex)
+                {
+                    return ModbusWriteResult.Failed(ModbusWriteStatus.WriteError, ex.Message);
+                }
+            }
+        }
+
+        private void WriteToRegister(ushort address, ModbusRegisterType registerType, string modbusDataType, object value)
         {
             switch (registerType)
             {
@@ -131,10 +186,10 @@ namespace OpcDaToModbusGateway
                     _dataStore.CoilInputs.WritePoints(address, new[] { ConvertToBool(value) });
                     break;
                 case ModbusRegisterType.HoldingRegister:
-                    _dataStore.HoldingRegisters.WritePoints(address, ConvertToRegisters(value));
+                    _dataStore.HoldingRegisters.WritePoints(address, DataTypeConverter.EncodeModbusRegisters(value, modbusDataType));
                     break;
                 case ModbusRegisterType.InputRegister:
-                    _dataStore.InputRegisters.WritePoints(address, ConvertToRegisters(value));
+                    _dataStore.InputRegisters.WritePoints(address, DataTypeConverter.EncodeModbusRegisters(value, modbusDataType));
                     break;
             }
         }
@@ -142,36 +197,18 @@ namespace OpcDaToModbusGateway
         private static bool ConvertToBool(object value)
         {
             if (value is bool b) return b;
-            try { return Convert.ToBoolean(value); }
-            catch { return false; }
-        }
-
-        private static ushort[] ConvertToRegisters(object value)
-        {
-            if (value is ushort[] us) return us;
-            if (value is short s) return new ushort[] { (ushort)s, 0 };
-            if (value is int i) return new ushort[] { (ushort)(i & 0xFFFF), (ushort)((i >> 16) & 0xFFFF) };
-            if (value is uint ui) return new ushort[] { (ushort)(ui & 0xFFFF), (ushort)((ui >> 16) & 0xFFFF) };
-            if (value is float f)
-            {
-                var bytes = BitConverter.GetBytes(f);
-                return new ushort[] { BitConverter.ToUInt16(bytes, 0), BitConverter.ToUInt16(bytes, 2) };
-            }
-            if (value is double d)
-            {
-                var bytes = BitConverter.GetBytes(d);
-                return new ushort[] { BitConverter.ToUInt16(bytes, 0), BitConverter.ToUInt16(bytes, 2),
-                                      BitConverter.ToUInt16(bytes, 4), BitConverter.ToUInt16(bytes, 6) };
-            }
-            try { return new ushort[] { Convert.ToUInt16(value), 0 }; }
-            catch { return new ushort[] { 0, 0 }; }
+            return Convert.ToBoolean(value);
         }
 
         public void Dispose()
         {
             if (Interlocked.Exchange(ref _disposedInt, 1) != 0) return;
             StopAsync().GetAwaiter().GetResult();
-            _tagMap.Clear();
+            lock (_lock)
+            {
+                _tagMap.Clear();
+                _dataStore = null;
+            }
         }
         public static string ComputeModbusPath(string itemId, string displayName)
         {

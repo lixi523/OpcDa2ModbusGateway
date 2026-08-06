@@ -1,7 +1,8 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using OpcDaToModbusGateway.Models;
@@ -484,7 +485,7 @@ namespace OpcDaToModbusGateway
         }
 
         // ================================================================
-        //  导出 CSV：将当前勾选的点位导出为表格（虚拟模式版本）
+        //  导出 CSV：仅导出 OPC DA 标签基本信息（ItemId、名称、类型、描述）
         // ================================================================
 
         private void BtnExportCsv_Click(object sender, EventArgs e)
@@ -508,9 +509,9 @@ namespace OpcDaToModbusGateway
 
             using (var sfd = new SaveFileDialog())
             {
-                sfd.Title = "导出已选点位";
+                sfd.Title = "导出 OPC DA 标签";
                 sfd.Filter = "CSV 文件 (*.csv)|*.csv";
-                sfd.FileName = $"点位_{_serverProgId}_{DateTime.Now:yyyyMMdd_HHmmss}.csv";
+                sfd.FileName = $"DA标签_{_serverProgId}_{DateTime.Now:yyyyMMdd_HHmmss}.csv";
                 sfd.DefaultExt = "csv";
 
                 if (sfd.ShowDialog(this) == DialogResult.OK)
@@ -518,20 +519,21 @@ namespace OpcDaToModbusGateway
                     try
                     {
                         var sb = new System.Text.StringBuilder();
-                        sb.AppendLine($"# 服务器: {_serverProgId}");
-                        sb.AppendLine($"# 导出时间: {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
-                        sb.AppendLine($"# 已选点位: {checkedItems.Count}");
-                        sb.AppendLine();
-                        sb.AppendLine("序号,ItemId,名称,数据类型,描述");
+                        sb.AppendLine($"#不用改,#服务器:,{EscapeCsv(_serverProgId)},,");
+                        sb.AppendLine($"#不用改,#导出时间:,{DateTime.Now:yyyy-M-d HH:mm},,");
+                        sb.AppendLine($"#修改C3,#已选点位:,{checkedItems.Count},,");
+                        sb.AppendLine(",,,,");
+                        sb.AppendLine("序号,ItemId,DisplayName,DataType,描述");
 
                         int index = 1;
                         foreach (var item in checkedItems)
                         {
-                            sb.AppendLine($"{index},{EscapeCsv(item.ItemId)},{EscapeCsv(item.Name)},{EscapeCsv(item.DataTypeName)},{EscapeCsv(item.Description)}");
+                            string dataType = item.DataTypeName == "Single" ? "float" : item.DataTypeName;
+                            sb.AppendLine($"{index},{EscapeCsv(item.ItemId)},{EscapeCsv(item.Name)},{EscapeCsv(dataType)},{EscapeCsv(item.Description)}");
                             index++;
                         }
 
-                        File.WriteAllText(sfd.FileName, sb.ToString(), new System.Text.UTF8Encoding(true));
+                        File.WriteAllText(sfd.FileName, sb.ToString(), System.Text.Encoding.GetEncoding("GBK"));
 
                         _lblStatus.Text = $"已导出 {checkedItems.Count} 个点位到: {Path.GetFileName(sfd.FileName)}";
                         MessageBox.Show(
@@ -548,14 +550,24 @@ namespace OpcDaToModbusGateway
         }
 
         // ================================================================
-        //  导入 CSV：从 CSV 读取点位列表，在列表中勾选对应项
+        //  导入 CSV：从 CSV 读取 OPC DA 标签列表，在列表中勾选对应项
         // ================================================================
+
+        // CSV 导入数据结构：仅 OPC DA 标签信息
+        private class CsvImportRecord
+        {
+            public string ItemId { get; set; }
+            public string DisplayName { get; set; }
+            public string DataType { get; set; }
+        }
+
+        private List<CsvImportRecord> _importRecords = new List<CsvImportRecord>();
 
         private void BtnImportCsv_Click(object sender, EventArgs e)
         {
             using (var ofd = new OpenFileDialog())
             {
-                ofd.Title = "导入点位 CSV";
+                ofd.Title = "导入 OPC DA 标签 CSV";
                 ofd.Filter = "CSV 文件 (*.csv)|*.csv|所有文件 (*.*)|*.*";
                 ofd.DefaultExt = "csv";
 
@@ -563,16 +575,17 @@ namespace OpcDaToModbusGateway
                 {
                     try
                     {
-                        string[] lines = File.ReadAllLines(ofd.FileName, System.Text.Encoding.UTF8);
+                        string[] lines = File.ReadAllLines(ofd.FileName, System.Text.Encoding.GetEncoding("GBK"));
 
-                        // 解析 ItemId 列表（跳过注释行 # 和表头行）
-                        var importItemIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                        // 解析 CSV：仅 OPC DA 标签信息
+                        var importRecords = new List<CsvImportRecord>();
                         bool headerPassed = false;
 
                         foreach (string rawLine in lines)
                         {
                             string line = rawLine.Trim();
-                            if (string.IsNullOrEmpty(line)) continue;
+                            // 全逗号分隔空行视为空行跳过
+                            if (string.IsNullOrEmpty(line) || string.IsNullOrWhiteSpace(line.Trim(','))) continue;
                             if (line.StartsWith("#")) continue;
 
                             // 第一行非注释行视为表头，跳过
@@ -582,14 +595,27 @@ namespace OpcDaToModbusGateway
                                 continue;
                             }
 
-                            // 解析 CSV 行，取第二列作为 ItemId
+                            // 解析 CSV 行
+                            // 列顺序: 序号,ItemId,DisplayName,DataType,描述
                             string[] cols = ParseCsvLine(line);
                             if (cols.Length >= 2)
                             {
-                                string itemId = cols[1].Trim();
-                                if (!string.IsNullOrEmpty(itemId))
+                                var record = new CsvImportRecord
                                 {
-                                    importItemIds.Add(itemId);
+                                    ItemId = cols[1].Trim()
+                                };
+
+                                // DisplayName（第3列）
+                                if (cols.Length >= 3)
+                                    record.DisplayName = cols[2].Trim();
+
+                                // DataType（第4列）
+                                if (cols.Length >= 4)
+                                    record.DataType = cols[3].Trim();
+
+                                if (!string.IsNullOrEmpty(record.ItemId))
+                                {
+                                    importRecords.Add(record);
                                 }
                             }
                             else if (cols.Length == 1)
@@ -598,12 +624,12 @@ namespace OpcDaToModbusGateway
                                 string itemId = cols[0].Trim();
                                 if (!string.IsNullOrEmpty(itemId))
                                 {
-                                    importItemIds.Add(itemId);
+                                    importRecords.Add(new CsvImportRecord { ItemId = itemId });
                                 }
                             }
                         }
 
-                        if (importItemIds.Count == 0)
+                        if (importRecords.Count == 0)
                         {
                             MessageBox.Show("CSV 文件中未找到有效的点位数据。",
                                 "提示", MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -612,39 +638,43 @@ namespace OpcDaToModbusGateway
 
                         // 在列表中勾选匹配的点位，取消不匹配的
                         int matchCount = 0;
-                        
+
                         // 虚拟模式：更新 _checkedItemIds，然后刷新显示
                         // 先清空当前显示项的勾选状态
                         foreach (var item in _displayItems)
                             _checkedItemIds.Remove(item.ItemId);
-                        
+
                         // 勾选匹配的项
                         foreach (var item in _allItems)
                         {
-                            if (importItemIds.Contains(item.ItemId))
+                            if (importRecords.Any(r => r.ItemId.Equals(item.ItemId, StringComparison.OrdinalIgnoreCase)))
                             {
                                 _checkedItemIds.Add(item.ItemId);
                                 matchCount++;
                             }
                         }
-                        
+
+                        // 缓存导入记录，供 BtnOK_Click 使用
+                        _importRecords = importRecords;
+
                         // 刷新显示以更新勾选状态
                         _listView.Refresh();
 
-                        _lblStatus.Text = $"从 CSV 导入: 匹配并勾选了 {matchCount} 个点位 (CSV 共 {importItemIds.Count} 条)";
+                        _lblStatus.Text = $"从 CSV 导入: 匹配并勾选了 {matchCount} 个点位 (CSV 共 {importRecords.Count} 条)";
                         _btnOK.Enabled = _listView.Items.Count > 0;
 
-                        if (matchCount < importItemIds.Count)
+                        if (matchCount < importRecords.Count)
                         {
                             MessageBox.Show(
-                                $"CSV 中有 {importItemIds.Count} 个点位，在当前列表中匹配到 {matchCount} 个并已勾选。\n" +
-                                $"未匹配的 {importItemIds.Count - matchCount} 个点位可能不存在于该服务器。",
+                                $"CSV 中有 {importRecords.Count} 个点位，在当前列表中匹配到 {matchCount} 个并已勾选。\n" +
+                                $"未匹配的 {importRecords.Count - matchCount} 个点位可能不存在于该服务器。",
                                 "导入结果", MessageBoxButtons.OK, MessageBoxIcon.Information);
                         }
                         else
                         {
                             MessageBox.Show(
-                                $"导入成功！已勾选 {matchCount} 个点位。\n点击\"确定导入\"完成操作。",
+                                $"导入成功！已勾选 {matchCount} 个点位。\n" +
+                                $"点击\"确定导入\"完成操作。",
                                 "导入结果", MessageBoxButtons.OK, MessageBoxIcon.Information);
                         }
                     }
@@ -735,13 +765,19 @@ namespace OpcDaToModbusGateway
             {
                 if (_checkedItemIds.Contains(item.ItemId))
                 {
-                    // H3 修复：传递浏览获取到的实际数据类型，而非硬编码 "Variant"
-                    SelectedTags.Add(new TagConfig
+                    // 查找 CSV 导入记录（如果有）
+                    var csvRecord = _importRecords.FirstOrDefault(r =>
+                        r.ItemId.Equals(item.ItemId, StringComparison.OrdinalIgnoreCase));
+
+                    // 创建 TagConfig
+                    var tag = new TagConfig
                     {
                         ItemId = item.ItemId,
-                        DisplayName = item.Name,
-                        DataType = item.DataTypeName ?? "Variant"
-                    });
+                        DisplayName = csvRecord?.DisplayName ?? item.Name,
+                        DataType = csvRecord?.DataType ?? item.DataTypeName ?? "Variant"
+                    };
+
+                    SelectedTags.Add(tag);
                 }
             }
 
@@ -756,14 +792,22 @@ namespace OpcDaToModbusGateway
             // 确定导入后立即分配所有点位的运行时唯一索引（TagKey）
             TagConfig.AssignTagKeys(SelectedTags);
 
-            // 预分配 OPC UA NodeId — 在导入时即确定每个点位的 NodeId 并持久化到配置文件，
-            // 启动网关时 DataBridge 直接使用预分配的 NodeId 创建 UA 节点，无需启动时重复计算。
+            // 按四个独立地址空间及声明类型宽度自动分配。
+            var nextAddresses = new Dictionary<ModbusRegisterType, int>();
+            foreach (ModbusRegisterType type in Enum.GetValues(typeof(ModbusRegisterType))) nextAddresses[type] = 0;
             foreach (var tag in SelectedTags)
             {
-                tag.ModbusAddress = 0;
+                var registerType = tag.GetEffectiveRegisterType();
+                // 类型无法解析（Variant 等）的标签按宽度 1 保守分配，DA 连接回写类型后再由校验覆盖。
+                int width = tag.TryGetEffectiveAddressWidth(out int w) ? w : 1;
+                int nextAddress = nextAddresses[registerType];
+                if (nextAddress + width - 1 > ushort.MaxValue)
+                    throw new InvalidOperationException($"标签 '{tag.TagKey ?? tag.ItemId}' 的 Modbus 地址空间溢出。");
+                tag.ModbusAddress = (ushort)nextAddress;
+                nextAddresses[registerType] = nextAddress + width;
             }
 
-            _logger?.Invoke($"[Browse] 已预分配 {SelectedTags.Count} 个 UA NodeId (ns=[Modbus])");
+            _logger?.Invoke($"[Browse] 已分配 {SelectedTags.Count} 个 Modbus 地址映射");
 
             DialogResult = DialogResult.OK;
             Close();

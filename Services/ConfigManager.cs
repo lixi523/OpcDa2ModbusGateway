@@ -1,10 +1,11 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows.Forms;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using OpcDaToModbusGateway.Models;
 
 namespace OpcDaToModbusGateway.Services
@@ -33,6 +34,7 @@ namespace OpcDaToModbusGateway.Services
     public class ConfigManager : IDisposable
     {
         private readonly LogManager _log;
+        private readonly string _baseDirectory;
 
         /// <summary>
         /// 保存操作的全局锁。
@@ -51,6 +53,11 @@ namespace OpcDaToModbusGateway.Services
         /// H-40: 文件系统监视器 — 监听 config.json 的外部修改。
         /// </summary>
         private FileSystemWatcher _configWatcher;
+        private System.Threading.Timer _watchDebounce;
+        private int _watchGeneration;
+        private readonly object _watchCallbackLock = new object();
+        private int _activeWatchCallbacks;
+        private readonly ManualResetEventSlim _watchCallbacksIdle = new ManualResetEventSlim(true);
 
         /// <summary>当前应用配置对象，Load() 后可读，UI 层可直接修改其属性</summary>
         public AppConfig Config { get; private set; }
@@ -73,8 +80,16 @@ namespace OpcDaToModbusGateway.Services
         /// <param name="log">日志管理器，用于记录配置操作日志（不可为 null）</param>
         /// <exception cref="ArgumentNullException">log 为 null 时抛出</exception>
         public ConfigManager(LogManager log)
+            : this(log, AppDomain.CurrentDomain.BaseDirectory)
+        {
+        }
+
+        public ConfigManager(LogManager log, string baseDirectory)
         {
             _log = log ?? throw new ArgumentNullException(nameof(log));
+            _baseDirectory = string.IsNullOrWhiteSpace(baseDirectory)
+                ? throw new ArgumentException("配置目录不能为空", nameof(baseDirectory))
+                : baseDirectory;
         }
 
         /// <summary>
@@ -105,16 +120,29 @@ namespace OpcDaToModbusGateway.Services
             try
             {
                 RawJson = File.ReadAllText(configPath);
-                Config = JsonConvert.DeserializeObject<AppConfig>(RawJson);
+                var loadedConfig = JsonConvert.DeserializeObject<AppConfig>(RawJson) ?? new AppConfig();
                 if (Config == null)
                 {
-                    Config = new AppConfig();
+                    Config = loadedConfig;
+                }
+                else
+                {
+                    // 保持根对象引用稳定，确保 GatewayManager 等长期持有者看到热重载后的配置。
+                    Config.OpcDa = loadedConfig.OpcDa;
+                    Config.ModbusTcp = loadedConfig.ModbusTcp;
+                    Config.LastConnectedProgId = loadedConfig.LastConnectedProgId;
+                    Config.AutoConnectDa = loadedConfig.AutoConnectDa;
+                    Config.AutoStartModbus = loadedConfig.AutoStartModbus;
+                    Config.AutoStartWithWindows = loadedConfig.AutoStartWithWindows;
+                    Config.EnableWatchdog = loadedConfig.EnableWatchdog;
+                    Config.AuthorizationCode = loadedConfig.AuthorizationCode;
                 }
 
                 // P1-1: 优先从独立的 tags.json 加载标签数据（增量保存优化）
                 // 如果 tags.json 不存在，回退到 config.json 中的内联 Tags（向后兼容）
                 string tagsPath = GetTagsPath();
-                if (File.Exists(tagsPath))
+                bool loadedInlineTags = !File.Exists(tagsPath);
+                if (!loadedInlineTags)
                 {
                     try
                     {
@@ -138,10 +166,19 @@ namespace OpcDaToModbusGateway.Services
                 ApplyBackwardCompatDefaults();
                 // N-8: 为尚未分配 TagKey 的标签生成唯一键并持久化。
                 bool keysAssigned = TagConfig.AssignTagKeys(Config.OpcDa?.Tags);
-                if (keysAssigned)
+                if (loadedInlineTags && Config.OpcDa?.Tags?.Count > 0)
                 {
-                    SaveImmediate();
-                    _log?.Append("[配置] 已为新标签分配 TagKey 并持久化");
+                    if (SaveAllImmediate())
+                        _log?.Append("[配置] 已将内联标签迁移到 tags.json");
+                    else
+                        _log?.Append("[配置] 内联标签迁移失败，已保留原 config.json");
+                }
+                else if (keysAssigned)
+                {
+                    if (SaveAllImmediate())
+                        _log?.Append("[配置] 已为新标签分配 TagKey 并持久化");
+                    else
+                        _log?.Append("[配置] TagKey 持久化失败");
                 }
 
                 // H-40: 启动配置文件监视
@@ -169,7 +206,7 @@ namespace OpcDaToModbusGateway.Services
         /// </summary>
         private void ApplyBackwardCompatDefaults()
         {
-            // 确保 OpcUa 配置节点存在（旧版本可能没有 UA 相关配置）
+            // 确保 ModbusTcp 配置节点存在（旧版本可能没有相关配置）
             if (Config.ModbusTcp == null)
             {
                 Config.ModbusTcp = new ModbusTcpConfig();
@@ -177,32 +214,13 @@ namespace OpcDaToModbusGateway.Services
 
             var mb = Config.ModbusTcp;
 
-            // 监听地址默认 localhost — 仅本机可连接，安全性较好
+            // 监听地址默认 0.0.0.0 — 允许所有网络接口访问
             if (string.IsNullOrEmpty(mb.ListenAddress))
-                mb.ListenAddress = "localhost";
+                mb.ListenAddress = "0.0.0.0";
 
-            // 安全模式和策略默认 None — 简化初始配置，用户可按需启用加密
-            // SecurityMode removed
-                // mb.SecurityMode removed
-            // SecurityPolicy removed
-                // mb.SecurityPolicy removed
-
-            // 向后兼容关键逻辑：通过检查原始 JSON 是否包含字段名来判断是"旧配置"还是"用户设置"。
-            // 如果 RawJson 中没有 "AutoAcceptCertificates"，说明这是旧版本配置升级上来的，
-            // 默认设为 false（不自动接受证书），要求用户显式确认后才启用，安全优先。
-            // 如果 RawJson 中已有此字段，则尊重用户的原始设置（无论 true/false）。
-            if (RawJson != null && !RawJson.Contains("AutoAcceptCertificates"))
-                // mb.AutoAcceptCertificates removed
-
-            // 会话数上限和超时时间：0 或负数表示旧配置未设置，填充生产环境合理值
-            // MaxSessionCount removed
-                // mb.MaxSessionCount removed
-            // SessionTimeout removed
-                // mb.SessionTimeout removed
-
-            // 端口号默认 4840（OPC UA 标准端口），防止 Port 为 0 时生成无效的端点地址
+            // 端口号默认 502（Modbus TCP 标准端口），防止 Port 为 0 时生成无效的端点地址
             if (mb.Port <= 0)
-                mb.Port = 4840;
+                mb.Port = 502;
 
             // 确保 OpcDa 配置节点存在
             if (Config.OpcDa == null)
@@ -300,32 +318,11 @@ namespace OpcDaToModbusGateway.Services
             if (Config == null) return;
 
             Monitor.Enter(_saveLock);
-
-            // R-8 修复：在 try 外部保存 Tags 原始引用，确保 finally 块能访问它。
-            // 如果序列化阶段抛出异常，finally 会恢复原始引用而非创建空列表，
-            // 防止 35K 标签数据永久丢失。
-            var tags = Config.OpcDa?.Tags;
             try
             {
-                string configPath = GetConfigPath();
-
-                // P1-1: 临时置 null Tags 以从 config.json 中排除标签数据。
-                // 标签数据由 SaveTagsImmediate() 单独写入 tags.json。
-                if (Config.OpcDa != null) Config.OpcDa.Tags = null;
-
-                // 序列化网关配置快照（不含 Tags，约 2KB，远小于全量 8-10MB）
-                string configJson = JsonConvert.SerializeObject(Config, Formatting.Indented);
-
-                // 恢复 Tags 引用（正常路径）
-                if (Config.OpcDa != null) Config.OpcDa.Tags = tags;
-
-                // 原子写入 config.json
-                string tempPath = configPath + ".tmp";
-                File.WriteAllText(tempPath, configJson);
-                if (File.Exists(configPath))
-                    File.Replace(tempPath, configPath, null);
-                else
-                    File.Move(tempPath, configPath);
+                var configSnapshot = JObject.FromObject(Config);
+                (configSnapshot["OpcDa"] as JObject)?.Remove("Tags");
+                AtomicWrite(GetConfigPath(), configSnapshot.ToString(Formatting.Indented));
             }
             catch (Exception ex)
             {
@@ -333,9 +330,6 @@ namespace OpcDaToModbusGateway.Services
             }
             finally
             {
-                // R-8 修复：序列化异常时 Tags 可能为 null，恢复原始引用而非空列表
-                if (Config?.OpcDa != null && Config.OpcDa.Tags == null)
-                    Config.OpcDa.Tags = tags;
                 Monitor.Exit(_saveLock);
             }
         }
@@ -357,12 +351,7 @@ namespace OpcDaToModbusGateway.Services
                     var tagsWrapper = new { Tags = Config.OpcDa.Tags };
                     string tagsJson = JsonConvert.SerializeObject(tagsWrapper, Formatting.Indented);
 
-                    string tempPath = tagsPath + ".tmp";
-                    File.WriteAllText(tempPath, tagsJson);
-                    if (File.Exists(tagsPath))
-                        File.Replace(tempPath, tagsPath, null);
-                    else
-                        File.Move(tempPath, tagsPath);
+                    AtomicWrite(tagsPath, tagsJson);
 
                     _log?.Append($"[配置] 已保存 {Config.OpcDa.Tags.Count} 个标签到 tags.json");
                 }
@@ -371,6 +360,57 @@ namespace OpcDaToModbusGateway.Services
                     _log?.Append($"保存标签配置失败: {ex.Message}");
                 }
             }
+        }
+
+        public bool SaveAllImmediate()
+        {
+            if (Config?.OpcDa?.Tags == null) return false;
+
+            lock (_saveLock)
+            {
+                _debounceTimer?.Dispose();
+                _debounceTimer = null;
+                string tagsBackup = null;
+                bool tagsExisted = File.Exists(GetTagsPath());
+                try
+                {
+                    string tagsJson = JsonConvert.SerializeObject(
+                        new { Tags = Config.OpcDa.Tags }, Formatting.Indented);
+                    var configSnapshot = JObject.FromObject(Config);
+                    (configSnapshot["OpcDa"] as JObject)?.Remove("Tags");
+
+                    if (tagsExisted) tagsBackup = File.ReadAllText(GetTagsPath());
+                    AtomicWrite(GetTagsPath(), tagsJson);
+                    try
+                    {
+                        AtomicWrite(GetConfigPath(), configSnapshot.ToString(Formatting.Indented));
+                    }
+                    catch
+                    {
+                        if (tagsExisted)
+                            AtomicWrite(GetTagsPath(), tagsBackup);
+                        else if (File.Exists(GetTagsPath()))
+                            File.Delete(GetTagsPath());
+                        throw;
+                    }
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    _log?.Append($"保存完整配置失败: {ex.Message}");
+                    return false;
+                }
+            }
+        }
+
+        private static void AtomicWrite(string path, string content)
+        {
+            string tempPath = path + ".tmp";
+            File.WriteAllText(tempPath, content);
+            if (File.Exists(path))
+                File.Replace(tempPath, path, null);
+            else
+                File.Move(tempPath, path);
         }
 
         /// <summary>
@@ -457,7 +497,7 @@ namespace OpcDaToModbusGateway.Services
                     System.Reflection.BindingFlags.SetProperty, null, shortcut, new object[] { 1 });
                 scType.InvokeMember("Description",
                     System.Reflection.BindingFlags.SetProperty, null, shortcut,
-                    new object[] { "OPC DA to OPC UA Gateway" });
+                    new object[] { "OPC DA to Modbus TCP Gateway" });
                 scType.InvokeMember("Save",
                     System.Reflection.BindingFlags.InvokeMethod, null, shortcut, null);
             }
@@ -488,14 +528,14 @@ namespace OpcDaToModbusGateway.Services
         /// 获取配置文件的完整路径（应用目录下的 config.json）。
         /// </summary>
         /// <returns>配置文件的绝对路径</returns>
-        private static string GetConfigPath()
-            => Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "config.json");
+        private string GetConfigPath()
+            => Path.Combine(_baseDirectory, "config.json");
 
         /// <summary>
         /// P1-1: 获取标签数据文件的完整路径（应用目录下的 tags.json）。
         /// </summary>
-        private static string GetTagsPath()
-            => Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "tags.json");
+        private string GetTagsPath()
+            => Path.Combine(_baseDirectory, "tags.json");
 
         // ================================================================
         //  H-40: 配置文件热加载感知
@@ -507,6 +547,9 @@ namespace OpcDaToModbusGateway.Services
         /// </summary>
         private void StartWatching()
         {
+            // Load() 也可能由 watcher 回调触发；已有实例时复用，避免重载后重复创建 watcher/timer。
+            if (Volatile.Read(ref _configWatcher) != null) return;
+
             try
             {
                 string configPath = GetConfigPath();
@@ -519,17 +562,37 @@ namespace OpcDaToModbusGateway.Services
                     EnableRaisingEvents = false  // 先不启动，等防抖设置完
                 };
 
-                // 防抖：500ms 内多次变更只触发一次
-                System.Threading.Timer debounce = null;
-                _configWatcher.Changed += (s, e) =>
+                int generation = Interlocked.Increment(ref _watchGeneration);
+                _watchDebounce = new System.Threading.Timer(_ =>
                 {
-                    debounce?.Dispose();
-                    debounce = new System.Threading.Timer(_ =>
+                    lock (_watchCallbackLock)
                     {
-                        try { debounce?.Dispose(); } catch { }
+                        if (Volatile.Read(ref _watchGeneration) != generation) return;
+                        _activeWatchCallbacks++;
+                        _watchCallbacksIdle.Reset();
+                    }
+
+                    try
+                    {
                         _log?.Append("[配置] 检测到 config.json 外部修改");
                         ConfigFileChanged?.Invoke();
-                    }, null, 500, Timeout.Infinite);
+                    }
+                    finally
+                    {
+                        lock (_watchCallbackLock)
+                        {
+                            if (--_activeWatchCallbacks == 0)
+                                _watchCallbacksIdle.Set();
+                        }
+                    }
+                }, null, Timeout.Infinite, Timeout.Infinite);
+
+                _configWatcher.Changed += (s, e) =>
+                {
+                    var debounce = _watchDebounce;
+                    if (debounce == null) return;
+                    try { debounce.Change(500, Timeout.Infinite); }
+                    catch (ObjectDisposedException) { }
                 };
 
                 _configWatcher.EnableRaisingEvents = true;
@@ -546,14 +609,28 @@ namespace OpcDaToModbusGateway.Services
         /// </summary>
         public void StopWatching()
         {
-            try { _configWatcher?.Dispose(); } catch { }
-            _configWatcher = null;
+            // 与回调共用锁：返回后保证没有旧回调仍会触发 ConfigFileChanged。
+            lock (_watchCallbackLock)
+            {
+                Interlocked.Increment(ref _watchGeneration);
+            }
+            var watcher = Interlocked.Exchange(ref _configWatcher, null);
+            if (watcher != null)
+            {
+                try { watcher.EnableRaisingEvents = false; } catch { }
+                try { watcher.Dispose(); } catch { }
+            }
+
+            var debounce = Interlocked.Exchange(ref _watchDebounce, null);
+            try { debounce?.Dispose(); } catch { }
+            _watchCallbacksIdle.Wait();
         }
 
         // H-40 改进：实现 IDisposable，确保 FileSystemWatcher 和 Timer 资源被正确释放
         public void Dispose()
         {
             StopWatching();
+            _watchCallbacksIdle.Dispose();
         }
     }
 }

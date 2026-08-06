@@ -62,21 +62,27 @@ namespace OpcDaToModbusGateway
             new ConcurrentDictionary<string, List<string>>();
 
         private Timer _readTimer;
+        private DaAcquisitionMode _lastMode = DaAcquisitionMode.Async;
 
         // 生命周期锁 + 原子 Disposed 守护
         private readonly object _lifecycleLock = new object();
         private int _disposedInt;
 
         /// <summary>
-        /// 数据变化事件：参数 (标签TagKey, 值, 质量是否Good, 时间戳)。
+        /// 数据变化事件：参数 (标签TagKey, 值, 质量三态, 时间戳)。
         /// 由 OPC DA 服务器的异步订阅回调触发，回调线程为 COM 线程池线程。
         /// </summary>
-        public event Action<string, object, bool, DateTime> OnDataChanged;
+        public event Action<string, object, OpcQualityKind, DateTime> OnDataChanged;
 
         /// <summary>
         /// 连接状态变化事件，用于向 UI 层报告连接/断开/错误等状态信息。
         /// </summary>
         public event Action<string> OnStatusChanged;
+
+        /// <summary>
+        /// 配置变更回调：当标签数据类型等配置被自动修正时触发，用于触发配置持久化。
+        /// </summary>
+        public event Action OnConfigChanged;
 
         /// <summary>
         /// 指示当前是否已成功连接到 OPC DA 服务器。
@@ -112,6 +118,9 @@ namespace OpcDaToModbusGateway
         /// <param name="mode">数据获取方式（异步订阅 / 同步轮询）。</param>
         public void Start(int updateRateMs, DaAcquisitionMode mode)
         {
+            if (Volatile.Read(ref _disposedInt) == 1)
+                throw new ObjectDisposedException(nameof(OpcDaClient));
+            _lastMode = mode;
             try
             {
                 OnStatusChanged?.Invoke("正在创建 OPC DA 客户端 (TitaniumAS)...");
@@ -126,7 +135,7 @@ namespace OpcDaToModbusGateway
                 OnStatusChanged?.Invoke($"  已连接到 OPC DA 服务器: {_serverProgId}");
 
                 // 创建订阅组（OPC DA Group），设置刷新率。
-                _group = _server.AddGroup("OpcDaToUaGroup");
+                _group = _server.AddGroup("OpcDaGroup");
                 _group.UpdateRate = TimeSpan.FromMilliseconds(updateRateMs);
                 _group.IsActive = true;
                 OnStatusChanged?.Invoke($"  订阅已创建, 刷新率: {updateRateMs}ms");
@@ -190,6 +199,7 @@ namespace OpcDaToModbusGateway
         {
             lock (_lifecycleLock)
             {
+                Interlocked.Exchange(ref _disposedInt, 1);
                 Stop();
             }
         }
@@ -277,6 +287,30 @@ namespace OpcDaToModbusGateway
 
             OnStatusChanged?.Invoke(
                 $"添加结果: {successCount} 成功, {failCount} 失败 (共 {count})");
+
+            // 从 OpcDaItem.CanonicalDataType 读取服务器返回的真实数据类型，
+            // 回写到 TagConfig.DataType，修正浏览阶段获取不到类型的问题。
+            int typeUpdated = 0;
+            for (int i = 0; i < allResults.Length; i++)
+            {
+                if (!allResults[i].Error.Succeeded) continue;
+                var item = allResults[i].Item;
+                if (item == null || item.CanonicalDataType == null) continue;
+
+                string typeName = item.CanonicalDataType.Name;
+                if (!string.IsNullOrEmpty(typeName) && typeName != "Object" && typeName != "Variant")
+                {
+                    string oldType = _tags[i].DataType;
+                    _tags[i].DataType = typeName;
+                    if (oldType != typeName)
+                        typeUpdated++;
+                }
+            }
+            if (typeUpdated > 0)
+            {
+                OnStatusChanged?.Invoke($"已从服务器获取真实数据类型，更新了 {typeUpdated} 个标签的数据类型");
+                OnConfigChanged?.Invoke();
+            }
         }
 
         // ================================================================
@@ -295,13 +329,10 @@ namespace OpcDaToModbusGateway
             {
                 try
                 {
-                    if (!value.Error.Succeeded) continue;
-                    if (value.Value == null) continue;
-
                     string itemId = value.Item?.ItemId;
                     if (string.IsNullOrEmpty(itemId)) continue;
 
-                    bool isGood = value.Error.Succeeded;
+                    OpcQualityKind quality = OpcQualityHelper.Classify((int)value.Quality.Status);
                     DateTime timestamp = value.Timestamp.LocalDateTime;
 
                     if (_itemIdToTagKeys.TryGetValue(itemId, out var tagKeys))
@@ -309,7 +340,7 @@ namespace OpcDaToModbusGateway
                         string[] keysSnapshot;
                         lock (tagKeys) { keysSnapshot = tagKeys.ToArray(); }
                         foreach (string tagKey in keysSnapshot)
-                            OnDataChanged?.Invoke(tagKey, value.Value, isGood, timestamp);
+                            OnDataChanged?.Invoke(tagKey, value.Value, quality, timestamp);
                     }
                 }
                 catch (Exception ex)
@@ -359,13 +390,10 @@ namespace OpcDaToModbusGateway
                 {
                     try
                     {
-                        if (!value.Error.Succeeded) continue;
-                        if (value.Value == null) continue;
-
                         string itemId = value.Item?.ItemId;
                         if (string.IsNullOrEmpty(itemId)) continue;
 
-                        bool isGood = value.Error.Succeeded;
+                        OpcQualityKind quality = OpcQualityHelper.Classify((int)value.Quality.Status);
                         DateTime timestamp = value.Timestamp.LocalDateTime;
 
                         if (_itemIdToTagKeys.TryGetValue(itemId, out var tagKeys))
@@ -373,7 +401,7 @@ namespace OpcDaToModbusGateway
                             string[] keysSnapshot;
                             lock (tagKeys) { keysSnapshot = tagKeys.ToArray(); }
                             foreach (string tagKey in keysSnapshot)
-                                OnDataChanged?.Invoke(tagKey, value.Value, isGood, timestamp);
+                                OnDataChanged?.Invoke(tagKey, value.Value, quality, timestamp);
                         }
                     }
                     catch { }
@@ -397,7 +425,6 @@ namespace OpcDaToModbusGateway
         /// </summary>
         private void Cleanup()
         {
-            if (Interlocked.Exchange(ref _disposedInt, 1) == 1) return;
 
             try
             {
@@ -465,8 +492,7 @@ namespace OpcDaToModbusGateway
                 {
                     OnStatusChanged?.Invoke("[看门狗] 正在尝试重新连接 OPC DA...");
                     Cleanup();
-                    Interlocked.Exchange(ref _disposedInt, 0);
-                    Start(updateRateMs);
+                    Start(updateRateMs, _lastMode);
                     OnStatusChanged?.Invoke("[看门狗] OPC DA 重连成功");
                     return true;
                 }
@@ -537,6 +563,13 @@ namespace OpcDaToModbusGateway
                         Log($"[Browse]   2. 服务器地址空间结构是否为分支嵌套（非扁平根节点）");
                         Log($"[Browse]   3. 可使用 OPC 客户端工具（如 Matrikon OPC Explorer）验证");
                     }
+
+                    if (items.Count > 0)
+                    {
+                        Log($"[Browse] 正在获取真实数据类型（将点位添加到临时 Group）...");
+                        FillRealDataTypes(server, items, Log);
+                    }
+
                     return items;
                 }
             }
@@ -563,6 +596,76 @@ namespace OpcDaToModbusGateway
                 Log($"[Browse] 异常堆栈: {ex.StackTrace}");
 
                 throw new InvalidOperationException(errorMsg, ex);
+            }
+        }
+
+        /// <summary>
+        /// 将浏览到的点位添加到临时 OPC DA Group，从 OpcDaItem.CanonicalDataType 获取真实数据类型。
+        /// 浏览阶段大多数 OPC DA 服务器只返回 "Variant"，需要添加到 Group 后才能获取真实类型。
+        /// </summary>
+        private static void FillRealDataTypes(OpcDaServer server, List<OpcDaItemInfo> items, Action<string> logger)
+        {
+            if (server == null || items == null || items.Count == 0) return;
+
+            OpcDaGroup tempGroup = null;
+            try
+            {
+                tempGroup = server.AddGroup("_TempBrowseGroup");
+                tempGroup.IsActive = false;
+
+                int count = items.Count;
+                var allResults = new OpcDaItemResult[count];
+                int batchCount = (count + AppConstants.DaAddItemBatchSize - 1) / AppConstants.DaAddItemBatchSize;
+
+                for (int batch = 0; batch < batchCount; batch++)
+                {
+                    int start = batch * AppConstants.DaAddItemBatchSize;
+                    int batchSize = Math.Min(AppConstants.DaAddItemBatchSize, count - start);
+
+                    var batchDefs = new OpcDaItemDefinition[batchSize];
+                    for (int i = 0; i < batchSize; i++)
+                    {
+                        batchDefs[i] = new OpcDaItemDefinition
+                        {
+                            ItemId = items[start + i].ItemId,
+                            IsActive = false
+                        };
+                    }
+
+                    OpcDaItemResult[] batchResults = tempGroup.AddItems(batchDefs);
+                    Array.Copy(batchResults, 0, allResults, start, batchResults.Length);
+                }
+
+                int typeUpdated = 0;
+                for (int i = 0; i < allResults.Length; i++)
+                {
+                    if (!allResults[i].Error.Succeeded) continue;
+                    var item = allResults[i].Item;
+                    if (item == null || item.CanonicalDataType == null) continue;
+
+                    string typeName = item.CanonicalDataType.Name;
+                    if (!string.IsNullOrEmpty(typeName) && typeName != "Object" && typeName != "Variant")
+                    {
+                        string oldType = items[i].DataTypeName;
+                        items[i].DataTypeName = typeName;
+                        if (oldType != typeName)
+                            typeUpdated++;
+                    }
+                }
+
+                logger?.Invoke($"[Browse] 数据类型获取完成: 更新了 {typeUpdated}/{count} 个点位的真实类型");
+            }
+            catch (Exception ex)
+            {
+                logger?.Invoke($"[Browse] 获取真实数据类型失败: {ex.Message}");
+            }
+            finally
+            {
+                if (tempGroup != null)
+                {
+                    try { server.RemoveGroup(tempGroup); } catch { }
+                    try { ((IDisposable)tempGroup).Dispose(); } catch { }
+                }
             }
         }
 

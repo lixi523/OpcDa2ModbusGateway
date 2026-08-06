@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 
@@ -10,10 +10,10 @@ namespace OpcDaToModbusGateway.Models
     //
     // 本文件定义了网关的全部配置模型，对应 config.json 的结构：
     //
-    //   AppConfig              —— 顶层配置，包含 DA/UA 子配置和全局选项
+    //   AppConfig              —— 顶层配置，包含 DA/Modbus TCP 子配置和全局选项
     //   ├── OpcDaConfig        —— OPC DA 连接配置（服务器地址、刷新频率、标签列表）
     //   │   └── TagConfig      —— 单个 DA 标签的配置（ItemId、显示名、数据类型）
-    //   └── ModbusTcpConfig        —— OPC UA 服务器配置（端口、安全模式、会话限制等）
+    //   └── ModbusTcpConfig        —— Modbus TCP 服务器配置（端口、监听地址、从站ID等）
     //
     // 配置通过 System.Text.Json 反序列化，属性名与 JSON key 一一对应。
     // GetEffective* 方法为每个可选配置项提供带默认值的安全访问入口，
@@ -21,11 +21,11 @@ namespace OpcDaToModbusGateway.Models
     // =====================================================================
 
     /// <summary>
-    /// 单个 OPC DA 标签的配置，对应 config.json 中 OpcDa.Tags 数组的每一项。
-    /// 
-    /// <para>一个 TagConfig 描述了从 OPC DA 服务器读取的一个数据点，
-    /// 以及它在 OPC UA 网关服务器中对应的变量节点。</para>
-    /// </summary>
+        /// 单个 OPC DA 标签的配置，对应 config.json 中 OpcDa.Tags 数组的每一项。
+        ///
+        /// <para>一个 TagConfig 描述了从 OPC DA 服务器读取的一个数据点，
+        /// 以及它在 Modbus TCP 网关服务器中对应的寄存器映射。</para>
+        /// </summary>
     public class TagConfig
     {
         /// <summary>
@@ -34,7 +34,7 @@ namespace OpcDaToModbusGateway.Models
         /// </summary>
         public string ItemId { get; set; }
 
-        /// <summary>在 OPC UA 地址空间中显示的名称，为空时回退到 <see cref="ItemId"/>。</summary>
+        /// <summary>在 Modbus 映射中显示的名称，为空时回退到 <see cref="ItemId"/>。</summary>
         public string DisplayName { get; set; }
 
         /// <summary>
@@ -46,6 +46,75 @@ namespace OpcDaToModbusGateway.Models
         public ushort ModbusAddress { get; set; }
         /// <summary>Modbus register type: Coil, DiscreteInput, HoldingRegister, InputRegister.</summary>
         public string ModbusRegisterType { get; set; }
+        /// <summary>
+        /// Modbus 侧数据类型（Bool/Int16/Int32/Float/Double/String/DateTime）。
+        /// 由 <see cref="DataTypeConverter.GetModbusDataType"/> 根据 OPC 数据类型自动推断，
+        /// 也可通过 CSV 导入时自定义。为空时回退到推断值。
+        /// </summary>
+        public string ModbusDataType { get; set; }
+
+        /// <summary>
+        /// 获取有效的 Modbus 数据类型：优先使用 <see cref="ModbusDataType"/>，
+        /// 为空时根据 <see cref="DataType"/> 自动推断。
+        /// </summary>
+        public string GetEffectiveModbusDataType()
+        {
+            return string.IsNullOrEmpty(ModbusDataType)
+                ? DataTypeConverter.GetModbusDataType(DataType)
+                : ModbusDataType;
+        }
+
+        /// <summary>
+        /// 尝试获取有效的 Modbus 数据类型，不抛出异常。
+        /// 当 <see cref="ModbusDataType"/> 为空且 <see cref="DataType"/> 无法推断
+        /// （Variant/Object/空/未知，可能在 DA 连接后由 CanonicalDataType 回写修正）时返回 false。
+        /// </summary>
+        public bool TryGetEffectiveModbusDataType(out string modbusDataType)
+        {
+            if (!string.IsNullOrEmpty(ModbusDataType))
+            {
+                modbusDataType = ModbusDataType;
+                return true;
+            }
+            return DataTypeConverter.TryGetModbusDataType(DataType, out modbusDataType);
+        }
+
+        public int GetEffectiveAddressWidth()
+        {
+            // Bit 地址空间固定占 1，但声明类型仍必须是有定义 wire encoding 的类型。
+            int registerWidth = DataTypeConverter.GetModbusRegisterWidth(GetEffectiveModbusDataType());
+            var registerType = GetEffectiveRegisterType();
+            return registerType == global::OpcDaToModbusGateway.ModbusRegisterType.Coil ||
+                   registerType == global::OpcDaToModbusGateway.ModbusRegisterType.DiscreteInput
+                ? 1
+                : registerWidth;
+        }
+
+        /// <summary>
+        /// 尝试获取标签占用的地址宽度，不抛出异常。
+        /// Bit 地址空间（Coil/DiscreteInput）固定为 1；寄存器空间按有效类型宽度。
+        /// 类型无法解析（Variant/Object/空等）时返回 false 并以宽度 1 保守计算，
+        /// 真实宽度待 DA 连接回写类型后再由 <see cref="GetEffectiveAddressWidth"/> 覆盖。
+        /// 显式声明或推断为 String/DateTime（无 wire encoding）时仍抛出异常。
+        /// </summary>
+        public bool TryGetEffectiveAddressWidth(out int width)
+        {
+            var registerType = GetEffectiveRegisterType();
+            if (registerType == global::OpcDaToModbusGateway.ModbusRegisterType.Coil ||
+                registerType == global::OpcDaToModbusGateway.ModbusRegisterType.DiscreteInput)
+            {
+                width = 1;
+                return true;
+            }
+            if (!TryGetEffectiveModbusDataType(out string modbusType))
+            {
+                width = 1;
+                return false;
+            }
+            width = DataTypeConverter.GetModbusRegisterWidth(modbusType);
+            return true;
+        }
+
         public global::OpcDaToModbusGateway.ModbusRegisterType GetEffectiveRegisterType()
         {
             if (string.IsNullOrEmpty(ModbusRegisterType))
@@ -64,14 +133,14 @@ namespace OpcDaToModbusGateway.Models
         }
 
         /// <summary>
-        /// 运行时内部唯一标识，用于在 <see cref="DataBridge"/> 和 <see cref="GatewayOpcUaServer"/>
+        /// 运行时内部唯一标识，用于在 <see cref="DataBridge"/> 和 <see cref="GatewayModbusTcpServer"/>
         /// 中索引标签。持久化到配置文件，加载后不再重新分配。
-        /// 
+        ///
         /// <para>由 <see cref="AssignTagKeys"/> 在加载/选择标签后统一分配：
         /// - 若所有 ItemId 唯一，TagKey = ItemId；
         /// - 若存在重复 ItemId，所有 TagKey 统一使用 "索引_ItemId" 格式，
-        ///   确保同一 ItemId 出现在多个 UA 节点时仍可区分。</para>
-        /// 
+        ///   确保同一 ItemId 出现在多个 Modbus 寄存器时仍可区分。</para>
+        ///
         /// <para>N-8 持久化：AssignTagKeys 现在仅对 TagKey 为 null/empty 的标签分配，
         /// 已有 TagKey 的标签保持不变。新分配的 Key 会通过 ConfigManager 立即写入磁盘。</para>
         /// </summary>
@@ -79,15 +148,15 @@ namespace OpcDaToModbusGateway.Models
 
         /// <summary>
         /// 为标签列表中尚未分配 TagKey 的标签分配唯一标识。
-        /// 
+        ///
         /// <para>N-8 修改：现在仅对 TagKey 为 null 或空字符串的标签进行分配，
         /// 已持久化 TagKey 的标签保持不变。返回值指示是否进行了新的分配。
         /// 分配策略与之前一致：
         /// - 如果所有 ItemId 都唯一，TagKey 直接等于 ItemId（最简洁）；
-        /// - 如果存在重复的 ItemId（同一 DA 标签映射到多个 UA 节点），
+        /// - 如果存在重复的 ItemId（同一 DA 标签映射到多个 Modbus 寄存器），
         ///   所有标签统一使用 "列表索引_ItemId" 格式（如 "3_Random.Int32"），
         ///   确保 TagKey 全局唯一。</para>
-        /// 
+        ///
         /// <para>此方法必须在标签列表确定后、创建 <see cref="DataBridge"/> 之前调用。</para>
         /// </summary>
         /// <param name="tags">需要检查并分配 TagKey 的标签列表。</param>
@@ -184,14 +253,11 @@ namespace OpcDaToModbusGateway.Models
     }
 
     /// <summary>
-    /// OPC UA 服务器配置，对应 config.json 中的 "OpcUa" 节点。
-    /// 
-    /// <para>包含 UA 服务器的网络监听、安全策略、会话管理等方面的配置。
+    /// Modbus TCP 服务器配置，对应 config.json 中的 "ModbusTcp" 节点。
+    ///
+    /// <para>包含 Modbus TCP 服务器的网络监听、端口、从站 ID 等配置。
     /// 每个可选配置项都提供了 GetEffective* 方法，返回经过默认值填充后的安全值，
     /// 避免使用者需要自行处理 null 或 0 值的情况。</para>
-    /// </summary>
-    /// <summary>
-    /// Modbus TCP server configuration, corresponds to the ModbusTcp section in config.json.
     /// </summary>
     public class ModbusTcpConfig
     {
@@ -220,8 +286,8 @@ namespace OpcDaToModbusGateway.Models
 
     /// <summary>
     /// 整体应用配置，对应 config.json 的根对象。
-    /// 
-    /// <para>包含 OPC DA 连接配置、OPC UA 服务器配置以及全局行为选项
+    ///
+    /// <para>包含 OPC DA 连接配置、Modbus TCP 服务器配置以及全局行为选项
     /// （自动连接、自动启动、看门狗守护、授权码等）。</para>
     /// </summary>
     public class AppConfig
@@ -229,7 +295,7 @@ namespace OpcDaToModbusGateway.Models
         /// <summary>OPC DA 连接配置。</summary>
         public OpcDaConfig OpcDa { get; set; }
 
-        /// <summary>OPC UA 服务器配置。</summary>
+        /// <summary>Modbus TCP 服务器配置。</summary>
         public ModbusTcpConfig ModbusTcp { get; set; }
 
         /// <summary>最后一次成功连接的 OPC DA 服务器 ProgId，用于下次启动时自动填充。</summary>
@@ -238,7 +304,7 @@ namespace OpcDaToModbusGateway.Models
         /// <summary>程序启动时是否自动连接 OPC DA 服务器。</summary>
         public bool AutoConnectDa { get; set; }
 
-        /// <summary>程序启动时是否自动启动 OPC UA 网关服务器。</summary>
+        /// <summary>程序启动时是否自动启动 Modbus TCP 网关服务器。</summary>
         public bool AutoStartModbus { get; set; }
 
         /// <summary>是否随 Windows 开机自动启动（通过启动文件夹快捷方式实现）。</summary>

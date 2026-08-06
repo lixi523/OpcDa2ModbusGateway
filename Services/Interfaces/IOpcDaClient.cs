@@ -23,11 +23,14 @@ namespace OpcDaToModbusGateway.Services.Interfaces
         /// <summary>当前是否已成功连接到 OPC DA 服务器。</summary>
         bool IsConnected { get; }
 
-        /// <summary>数据变化事件：参数 (TagKey, 值, 质量是否Good, 时间戳)。</summary>
-        event Action<string, object, bool, DateTime> OnDataChanged;
+        /// <summary>数据变化事件：参数 (TagKey, 值, 质量三态, 时间戳)。</summary>
+        event Action<string, object, OpcQualityKind, DateTime> OnDataChanged;
 
         /// <summary>连接状态变化事件，用于向 UI 层报告连接/断开/错误等状态信息。</summary>
         event Action<string> OnStatusChanged;
+
+        /// <summary>配置变更事件：当标签数据类型等配置被自动修正时触发，用于触发配置持久化。</summary>
+        event Action OnConfigChanged;
 
         /// <summary>
         /// 启动客户端：连接服务器、创建订阅、按指定数据获取方式注册回调或启动轮询。

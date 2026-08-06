@@ -14,7 +14,7 @@ namespace OpcDaToModbusGateway.Services
     public class LogManager : IDisposable
     {
         private readonly TextBox _textBox;
-        private readonly BlockingCollection<string> _queue = new BlockingCollection<string>(10000);
+        private readonly BlockingCollection<string> _queue = new BlockingCollection<string>(AppConstants.LogQueueCapacity);
         private readonly Thread _writerThread;
         private readonly string _logDir;
         private StreamWriter _fileWriter;

@@ -4,7 +4,7 @@
   <trustInfo xmlns="urn:schemas-microsoft-com:asm.v2">
     <security>
       <requestedPrivileges xmlns="urn:schemas-microsoft-com:asm.v3">
-        <!-- 要求以管理员权限运行，确保 OPC DA COM 组件和 UA 服务器可正常访问 -->
+        <!-- 要求以管理员权限运行，确保 OPC DA COM 组件和 Modbus TCP 服务器可正常访问 -->
         <requestedExecutionLevel level="requireAdministrator" uiAccess="false"/>
       </requestedPrivileges>
     </security>

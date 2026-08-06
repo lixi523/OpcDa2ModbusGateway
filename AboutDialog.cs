@@ -46,7 +46,7 @@ namespace OpcDaToModbusGateway
 
         private void BuildUI()
         {
-            Text = "关于 OPC DA → OPC UA 网关";
+            Text = "关于 OPC DA → Modbus TCP 网关";
             Size = new Size(480, 580);
             StartPosition = FormStartPosition.CenterParent;
             FormBorderStyle = FormBorderStyle.FixedDialog;
@@ -92,7 +92,7 @@ namespace OpcDaToModbusGateway
 
             var lblTitle = new Label
             {
-                Text = "OPC DA → OPC UA 网关",
+                Text = "OPC DA → Modbus TCP 网关",
                 Location = new Point(iconImage != null ? 76 : 16, 18),
                 AutoSize = true,
                 Font = OwnedFont("Microsoft YaHei UI", 14f, FontStyle.Bold),
@@ -124,8 +124,8 @@ namespace OpcDaToModbusGateway
 
             string[] infoLines = new string[]
             {
-                "OPC DA 到 OPC UA 协议转换网关",
-                "将传统 OPC DA(COM 协议)数据实时桥接到现OPC UA(TCP 协议)。",
+                "OPC DA 到 Modbus TCP 协议转换网关",
+                "将传统 OPC DA(COM 协议)数据实时桥接到 Modbus TCP(TCP 协议)。",
                 "遇到bug请联系18510086469,408738480@qq.com",
                 "技术栈:",
                 "  .NET Framework 4.7.2 (x86)",
@@ -293,7 +293,7 @@ namespace OpcDaToModbusGateway
             // 底部版权
             var lblCopyright = new Label
             {
-                Text = "Copyright © 2026  OPC DA to UA Gateway",
+                Text = "Copyright © 2026  OPC DA to Modbus TCP Gateway",
                 Location = new Point(16, 478),
                 AutoSize = true,
                 ForeColor = Color.Gray,

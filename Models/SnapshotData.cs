@@ -14,9 +14,12 @@ public class TagSnapshot
     public string DataType { get; set; }
     public ushort ModbusAddress { get; set; }
     public string ModbusRegisterType { get; set; }
-    public object Value { get; set; }
-    public string Quality { get; set; }
-    public string Timestamp { get; set; }
+    public object DaValue { get; set; }
+    public string DaQuality { get; set; }
+    public string DaTimestamp { get; set; }
+    public object ModbusValue { get; set; }
+    public string ModbusStatus { get; set; }
+    public string ModbusLastSuccessTimestamp { get; set; }
 }
 
 public class SnapshotData
