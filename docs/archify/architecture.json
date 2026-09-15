@@ -1,0 +1,284 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "OpcDaToModbusGateway 运行时架构",
+    "locale": "zh-CN",
+    "output": "docs/architecture.html",
+    "quality_profile": "showcase",
+    "viewBox": [
+      920,
+      480
+    ]
+  },
+  "components": [
+    {
+      "id": "opc-da-server",
+      "type": "external",
+      "label": "OPC DA 服务器",
+      "sublabel": "Matrikon / Kepware",
+      "pos": [
+        0,
+        60
+      ],
+      "size": [
+        110,
+        60
+      ]
+    },
+    {
+      "id": "opc-da-client",
+      "type": "backend",
+      "label": "OpcDaClient",
+      "sublabel": "COM 订阅 · Quality 三态",
+      "pos": [
+        150,
+        60
+      ],
+      "size": [
+        110,
+        60
+      ]
+    },
+    {
+      "id": "data-bridge",
+      "type": "backend",
+      "label": "DataBridge",
+      "sublabel": "事件驱动 · 快照分离",
+      "pos": [
+        300,
+        60
+      ],
+      "size": [
+        110,
+        60
+      ]
+    },
+    {
+      "id": "gateway-modbus-server",
+      "type": "backend",
+      "label": "Modbus Server",
+      "sublabel": "NModbus 从站",
+      "pos": [
+        450,
+        60
+      ],
+      "size": [
+        110,
+        60
+      ]
+    },
+    {
+      "id": "modbus-client",
+      "type": "external",
+      "label": "Modbus TCP 客户端",
+      "sublabel": "SCADA / MES",
+      "pos": [
+        600,
+        60
+      ],
+      "size": [
+        110,
+        60
+      ]
+    },
+    {
+      "id": "main-form",
+      "type": "backend",
+      "label": "MainForm",
+      "sublabel": "WinForms UI",
+      "pos": [
+        150,
+        200
+      ],
+      "size": [
+        110,
+        60
+      ]
+    },
+    {
+      "id": "gateway-manager",
+      "type": "backend",
+      "label": "GatewayManager",
+      "sublabel": "生命周期 · 重连",
+      "pos": [
+        300,
+        200
+      ],
+      "size": [
+        110,
+        60
+      ]
+    },
+    {
+      "id": "config-manager",
+      "type": "backend",
+      "label": "ConfigManager",
+      "sublabel": "原子保存 · 热重载",
+      "pos": [
+        450,
+        200
+      ],
+      "size": [
+        110,
+        60
+      ]
+    },
+    {
+      "id": "data-type-converter",
+      "type": "backend",
+      "label": "DataTypeConverter",
+      "sublabel": "类型解析 · wire 编码",
+      "pos": [
+        300,
+        340
+      ],
+      "size": [
+        110,
+        60
+      ]
+    },
+    {
+      "id": "nmodbus",
+      "type": "external",
+      "label": "NModbus 3.x",
+      "sublabel": "Costura 嵌入",
+      "pos": [
+        450,
+        340
+      ],
+      "size": [
+        110,
+        60
+      ]
+    },
+    {
+      "id": "watchdog-manager",
+      "type": "backend",
+      "label": "WatchdogManager",
+      "sublabel": "心跳 · 优雅退出",
+      "pos": [
+        600,
+        200
+      ],
+      "size": [
+        110,
+        60
+      ]
+    },
+    {
+      "id": "license-manager",
+      "type": "backend",
+      "label": "LicenseManager",
+      "sublabel": "HMAC-SHA256",
+      "pos": [
+        600,
+        340
+      ],
+      "size": [
+        110,
+        60
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "网关进程",
+      "wraps": [
+        "opc-da-client",
+        "data-bridge",
+        "gateway-modbus-server",
+        "main-form",
+        "gateway-manager",
+        "config-manager",
+        "data-type-converter",
+        "nmodbus",
+        "watchdog-manager",
+        "license-manager"
+      ],
+      "pad": 20
+    }
+  ],
+  "connections": [
+    {
+      "from": "opc-da-server",
+      "to": "opc-da-client",
+      "label": "OPC DA COM",
+      "variant": "emphasis",
+      "labelAt": [
+        120,
+        134
+      ]
+    },
+    {
+      "from": "opc-da-client",
+      "to": "data-bridge",
+      "label": "OnDataChanged",
+      "variant": "emphasis",
+      "labelAt": [
+        270,
+        134
+      ]
+    },
+    {
+      "from": "data-bridge",
+      "to": "gateway-modbus-server",
+      "label": "UpdateValue",
+      "variant": "emphasis",
+      "labelAt": [
+        420,
+        134
+      ]
+    },
+    {
+      "from": "gateway-modbus-server",
+      "to": "modbus-client",
+      "label": "Modbus TCP :502",
+      "variant": "emphasis",
+      "labelAt": [
+        570,
+        134
+      ]
+    },
+    {
+      "from": "main-form",
+      "to": "gateway-manager"
+    },
+    {
+      "from": "gateway-manager",
+      "to": "config-manager"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "主数据流路径",
+      "items": [
+        "OPC DA 服务器 → OpcDaClient（COM 订阅）→ DataBridge → Modbus Server → Modbus TCP 客户端 :502",
+        "DataTypeConverter 安全转换 DA Variant → Modbus wire type，多字节高 word 在前",
+        "Quality 三态传播：Good 写入 / Uncertain 保持旧值 / Bad 标记 BadQuality"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "外部依赖与信任边界",
+      "items": [
+        "OPC DA 服务器：外部 COM 组件，需 STA 线程模型，运行时不可信",
+        "Modbus TCP 0.0.0.0:502：暴露于网络，生产环境需防火墙限定",
+        "NModbus 3.x：第三方协议栈，Costura.Fody 嵌入单 EXE",
+        "config.json/tags.json：原子写入防断电损坏"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "支撑组件",
+      "items": [
+        "GatewayManager：三阶段有序启动，失败回滚，指数退避重连",
+        "WatchdogManager：命名事件心跳，看门狗子进程自动重启",
+        "ConfigManager：500ms 防抖 + FileSystemWatcher 热重载",
+        "LicenseManager：PCID + HMAC-SHA256 离线授权码"
+      ]
+    }
+  ]
+}

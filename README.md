@@ -23,7 +23,7 @@ OpcDaToModbusGateway 是一款运行于 Windows 的轻量级工业协议网关�
 | OPC DA 扫描与订阅 | 自动枚举 DA 服务器/分支/标签，支持手动添加与点表批量导入导出（CSV） |
 | 数据类型转换 | 内置 `DataTypeConverter`，DA → Modbus 类型安全映射（见 `Models/DataTypeConverter.cs`） |
 | Modbus TCP 服务 | NModbus 驱动（`GatewayModbusTcpServer.cs`），支持 Coil/DiscreteInput/HoldingRegister/InputRegister |
-| 授权管理 | `LicenseManager` 授权校验，配套 `Keygen` 工具计算授权码 |
+| 授权管理 | `LicenseManager` 授权校验；授权码由内部离线工具生成（源码不随仓库分发） |
 | 看门狗守护 | `Watchdog` 子进程心跳监护，异常退出自动拉起（60s/3 次重启保护） |
 | 健康快照 | `HealthSnapshot` 采集内存/连接状态，超标（20%/50%）告警 |
 | 托盘运行 | 最小化为系统托盘，支持开机自启 |
@@ -42,7 +42,7 @@ OpcDaToModbusGateway 是一款运行于 Windows 的轻量级工业协议网关�
 
 ```
 OpcDa2Modbus/
-├── OpcDaToModbusGateway.sln          # 解决方案（主程序 + Keygen + Watchdog）
+├── OpcDaToModbusGateway.sln          # 解决方案（主程序 + Watchdog + Tests）
 ├── OpcDaToModbusGateway.csproj       # 主程序工程（SDK 风格 net472 WinForms）
 ├── Program.cs / MainForm.cs          # 入口与主控窗体
 ├── OpcDaClient.cs                    # OPC DA 客户端封装
@@ -53,7 +53,6 @@ OpcDa2Modbus/
 ├── Models/                           # 标签配置、数据类型转换、快照模型
 ├── Services/                         # GatewayManager / LicenseManager / HealthSnapshot / LogManager / ConfigManager / WatchdogManager
 │   └── Interfaces/                   # IOpcDaClient / IGatewayModbusTcpServer / IDataBridge / IHealthSnapshot / FakeOpcDaClient
-├── Keygen/                           # 授权码计算工具（独立子工程）
 ├── Watchdog/                         # 看门狗守护进程（独立子工程）
 ├── config.json                       # 运行配置（演示配置，可改）
 └── 文档/                             # 见第 7 节
@@ -67,7 +66,7 @@ OpcDa2Modbus/
 ```bat
 dotnet build OpcDaToModbusGateway.sln -c Release -v minimal
 ```
-构建产物：`bin/Release/net472/OpcDaToModbusGateway.exe`、`Keygen/bin/Release/...`、`Watchdog/bin/Release/...`。
+构建产物：`bin/Release/net472/OpcDaToModbusGateway.exe`、`Watchdog/bin/Release/...`。
 
 > 详细常见报错与处理（net472 引用缺失、离线还原、x86 COM）见 [`本地编译步骤.md`](本地编译步骤.md)。
 
@@ -82,7 +81,7 @@ dotnet build OpcDaToModbusGateway.sln -c Release -v minimal
 2. 「服务器」→ 选择/扫描 OPC DA 服务器（或「手动添加」标签）。
 3. 导入/编辑点表，确认 Modbus 寄存器地址映射。
 4. 启动后 Modbus TCP 客户端连接 `<本机IP>:502` 读取寄存器数据。
-5. 授权到期前在「关于」中填入 `Keygen` 生成的授权码。
+5. 授权到期前在「关于」中填入授权码（由授权方通过内部工具生成）。
 
 完整操作、配置字段、授权与排障见 [`使用文档.md`](使用文档.md)。
 
@@ -136,7 +135,7 @@ dotnet build OpcDaToModbusGateway.sln -c Release -v minimal
 ---
 
 
-程序含试用授权，到期需授权码激活。`Keygen` 子项目为离线授权码计算工具（需合法授权参数）。授权逻辑见 `Services/LicenseManager.cs`。
+程序含试用授权，到期需授权码激活。授权码由授权方通过内部离线工具生成（工具源码不随仓库分发）。授权逻辑见 `Services/LicenseManager.cs`。
 
 ---
 
