@@ -60,7 +60,7 @@ namespace OpcDaToModbusGateway
             try
             {
                 byte slaveId = _config.SlaveId > 0 ? _config.SlaveId : (byte)1;
-                string listenAddress = string.IsNullOrEmpty(_config.ListenAddress) ? "0.0.0.0" : _config.ListenAddress;
+                string listenAddress = string.IsNullOrEmpty(_config.ListenAddress) ? "127.0.0.1" : _config.ListenAddress;
                 int port = _config.Port > 0 ? _config.Port : 502;
 
                 // 先尝试释放可能残留的 TIME_WAIT 占用 — 使用 TcpListener 显式指定 ExclusiveAddressUse=false

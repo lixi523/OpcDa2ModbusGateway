@@ -270,7 +270,7 @@ namespace OpcDaToModbusGateway.Models
         public int MaxDiscreteInputs { get; set; }
         public string GetEffectiveListenAddress()
         {
-            return string.IsNullOrEmpty(ListenAddress) ? "0.0.0.0" : ListenAddress;
+            return string.IsNullOrEmpty(ListenAddress) ? "127.0.0.1" : ListenAddress;
         }
         public int GetEffectivePort()
         {
@@ -279,7 +279,7 @@ namespace OpcDaToModbusGateway.Models
         public string GetEndpointUrl()
         {
             int port = Port > 0 ? Port : 502;
-            string host = string.IsNullOrEmpty(ListenAddress) ? "0.0.0.0" : ListenAddress;
+            string host = string.IsNullOrEmpty(ListenAddress) ? "127.0.0.1" : ListenAddress;
             return string.Format("modbus.tcp://{0}:{1}/", host, port);
         }
     }

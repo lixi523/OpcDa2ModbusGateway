@@ -214,9 +214,10 @@ namespace OpcDaToModbusGateway.Services
 
             var mb = Config.ModbusTcp;
 
-            // 监听地址默认 0.0.0.0 — 允许所有网络接口访问
+            // 监听地址默认 127.0.0.1（安全默认值：仅本机回环，防止未配置时暴露到全网）
+            // 生产环境需要外部客户端访问时，显式配置为 0.0.0.0 或指定内网 IP
             if (string.IsNullOrEmpty(mb.ListenAddress))
-                mb.ListenAddress = "0.0.0.0";
+                mb.ListenAddress = "127.0.0.1";
 
             // 端口号默认 502（Modbus TCP 标准端口），防止 Port 为 0 时生成无效的端点地址
             if (mb.Port <= 0)

@@ -187,8 +187,9 @@ namespace OpcDaToModbusGateway
             {
                 Location = new Point(85, 25), Size = new Size(140, 25), DropDownStyle = ComboBoxStyle.DropDownList
             };
-            _cmbListenAddress.Items.AddRange(new object[] { "0.0.0.0", "127.0.0.1" });
+            _cmbListenAddress.Items.AddRange(new object[] { "127.0.0.1", "0.0.0.0" });
             _cmbListenAddress.SelectedIndex = 0;
+            // 默认 127.0.0.1：仅本机可访问，防止未配置时暴露到外部网络
             _cmbListenAddress.SelectedIndexChanged += (s, ev) =>
             {
                 if (!_isLoadingConfig && Config != null)

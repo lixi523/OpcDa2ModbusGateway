@@ -68,8 +68,14 @@
     <Copy SourceFiles="Watchdog\bin\$(Configuration)\$(TargetFramework)\OpcDaToModbusGateway.Watchdog.exe" DestinationFolder="$(OutputPath)" SkipUnchangedFiles="true" />
   </Target>
 
-  <!-- 编译授权码生成工具，并复制到主程序输出目录 -->
-  <Target Name="BuildAndCopyKeygen" BeforeTargets="Build">
+  <!-- 编译授权码生成工具，并复制到主程序输出目录（仅内部构建启用：/p:IncludeKeygen=true）
+       客户发布包默认不含 Keygen，防止授权码被离线伪造 -->
+  <PropertyGroup>
+    <IncludeKeygen Condition="'$(IncludeKeygen)' == ''">false</IncludeKeygen>
+  </PropertyGroup>
+
+  <!-- 编译授权码生成工具，并复制到主程序输出目录（默认不启用，需显式 /p:IncludeKeygen=true） -->
+  <Target Name="BuildAndCopyKeygen" BeforeTargets="Build" Condition="'$(IncludeKeygen)' == 'true'">
     <Exec Command="dotnet build &quot;$(MSBuildProjectDirectory)\Keygen\OpcDaToModbusGateway.Keygen.csproj&quot; -c $(Configuration) -v q" />
     <Copy SourceFiles="Keygen\bin\$(Configuration)\$(TargetFramework)\OpcDaToModbusGateway.Keygen.exe" DestinationFolder="$(OutputPath)" SkipUnchangedFiles="true" />
   </Target>

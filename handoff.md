@@ -3,6 +3,7 @@
 > 生成时间：2026-08-06
 > 版本：V2.1.0
 > 适用：新窗口继续任务
+> 代码状态：HEAD=`e64dbef`（V2.1.0 已提交）；工作区仅 `.reasonix/` 未跟踪
 
 ---
 
@@ -26,71 +27,53 @@
 | OPC DA 客户端连接与浏览 | ✔ 完成（含 CanonicalDataType 真实类型回写）|
 | Modbus TCP 从站服务 | ✔ 完成（NModbus 3.0.81，声明类型/宽度/高 word 编码统一）|
 | DA → Modbus 数据桥接 | ✔ 完成（显式写入结果 + DA/MB 分离快照）|
-| OPC Quality 传播 | ✔ 完成（helper 三态分类；桥接仅 Good/非 Good 处理）|
+| OPC Quality 传播 | ✔ 完成（`OnDataChanged` 三态 `OpcQualityKind`，Uncertain/Bad 区分显示）|
 | 主窗口监控表格 | ✔ 完成（DA/MB 分列显示，含实时缓存）|
-| CSV 导出/导入（标签/映射分离）| ✔ 完成（GBK 编码，WPS 兼容，TagKey 身份）|
+| CSV 导出/导入（标签/映射分离）| ✔ 完成（GBK 编码，WPS 兼容，TagKey 身份，全逗号空行兼容）|
 | 配置持久化与迁移 | ✔ 完成（config.json + tags.json 原子保存，热重载加固）|
 | 看门狗进程 | ✔ 完成（优雅退出状态机 + 重新武装）|
 | 构建与自动化测试 | ✔ Release 0 错误 0 警告；MSTest 33/33 通过；Windows CI 已恢复 |
 | 文档 | ✔ README / 开发指南 / handoff 已更新至 V2.1.0 |
+| 版本发布 | ✔ V2.1.0 已提交 `e64dbef` |
 | **运行时验证（连接真实 DA 服务 + Modbus 客户端读取）** | ❌ **尚未进行（P0 阻塞项）** |
 
 ---
 
-## 3. 已完成修复
-### 3.1 版本升级至 V2.0.0
-- 三个生产项目（主程序、Watchdog、Keygen）`Version=2.0.0`、`AssemblyVersion/FileVersion=2.0.0.0`
-- `AppConstants.AppVersion = "2.0.0"`，Keygen banner 同步
-- Watchdog/Keygen 产品元数据中的 OPC UA 残留已清除
-- README、开发指南、handoff 当前版本与版本历史已更新
+## 3. 已完成修改
 
-### 3.2 Modbus 类型、宽度与字节序统一
-- `ModbusDataType` 进入运行时链路，注册节点时传给 server 并按声明类型编码（不再按 CLR 类型猜测）
-- 支持 `Bool / Byte / SByte / Int16 / UInt16 / Int32 / UInt32 / Float(Single) / Double`
-- 16-bit 1 register、32-bit 2 registers、64-bit 4 registers；多 word 高 word 在前
-- `String`、`DateTime` 无 wire encoding，启动映射校验明确拒绝并指出标签
-- `UInt16/UInt32` 不再被错误推断为有符号类型
+### 3.1 V2.0.0 升级与 Modbus 类型/宽度/字节序统一
+- 三个生产项目（主程序、Watchdog、Keygen）`Version=2.0.0`；`AppConstants.AppVersion`、Keygen banner 同步
+- `ModbusDataType` 进入运行时链路，按声明类型编码（不再按 CLR 类型猜测）；支持 Bool/Byte/SByte/Int16/UInt16/Int32/UInt32/Float/Double
+- 16-bit 1 寄存器、32-bit 2、64-bit 4；多 word **高 word 在前**；`String`/`DateTime` 无 wire encoding，启动映射校验明确拒绝
 - Modbus TCP 启动失败路径清理 listener/network/CTS/datastore，避免端口残留
+- 自动地址按四个地址空间（Coil/DiscreteInput/HoldingRegister/InputRegister）分别从 0 顺序推进，按声明类型宽度递增；启动前与 CanonicalDataType 回写后各执行一次 `ValidateMappings`（溢出/重叠检查）
 
-### 3.3 地址分配与映射验证
-- 自动地址按四个地址空间（Coil/DiscreteInput/HoldingRegister/InputRegister）分别从 0 顺序推进，按声明类型宽度递增
-- 启动前和 CanonicalDataType 回写后各执行一次 `ValidateMappings`：检查地址溢出与同空间重叠
-- `TagKey` 持久化于 `tags.json`；CSV 第一列使用 `<序号>|<Base64Url(TagKey)>` 稳定身份，旧纯数字格式仅在无重复 ItemId 时兼容
-
-### 3.4 数据正确性（P0 修复批次）
+### 3.2 数据正确性与 TagKey（P0 修复批次）
 - **配置迁移不丢标签**：`SaveAllImmediate()` 先原子写 tags.json 再写 config 快照；热重载保持 `AppConfig` 根引用稳定
-- **OPC Quality**：`OpcQualityHelper` 按高两位分类 Good/Uncertain/Bad；`Error.Succeeded` 不再替代 Quality；Bad/Uncertain 有值
 - **显式失败**：`DataTypeConverter.ConvertValue` 不再吞异常写零；`IGatewayModbusTcpServer.UpdateValue` 返回 `ModbusWriteResult`
 - **DA/MB 快照分离**：`TagSnapshot` 分离 DA（DaValue/DaQuality/DaTimestamp）与 MB（ModbusValue/ModbusStatus/ModbusLastSuccess）
+- `TagKey` 持久化于 `tags.json`；CSV 第一列用 `<序号>|<Base64Url(TagKey)>` 稳定身份，旧纯数字格式仅在无重复 ItemId 时兼容
 
-### 3.5 看门狗修复
-- 优雅退出后进入持久 `WaitingForManualStart` 状态，主程序缺席期间持续抑制重启
-- 主程序重新出现（或优雅信号被新实例清除）后重新武装崩溃守卫
-- 补充“手工启动后首个崩溃不拉起”测试
+### 3.3 看门狗修复
+- 优雅退出后进入持久 `WaitingForManualStart` 状态，主程序缺席期间持续抑制重启；主程序重现后重新武装崩溃守卫
 - 独立 `WatchdogRestartPolicy` 纯逻辑类，便于单元测试
 
-### 3.6 自动化测试
-- 新增 MSTest 测试项目 `Tests/OpcDaToModbusGateway.Tests.csproj`（net472）
-- 覆盖：类型宽度/编码、CSV 身份、DA/MB 快照、配置迁移回滚、Quality 分类、Watchdog 状态机等，共 33 项
+### 3.4 V2.0.0 变更集审查修复（原 8 项 + 子代理复核 6 项）
+- **Variant 中止启动**：`TryGetModbusDataType`/`TryGetEffectiveAddressWidth`/`ValidateMappings` 保守校验；`DataBridge` 拆 `RegisterModbusNodes()` + `OnClientConfigChanged()` 动态补注册
+- **Stop 后可重启**：`OpcDaClient.Stop()` 不再置 `_disposedInt`，`Dispose()`（持锁）置 1，`Start` 首行加 `ObjectDisposedException` 守卫
+- **Quality 三态**：`OnDataChanged` 签名 `bool isGood` → `OpcQualityKind`（`IOpcDaClient`/`OpcDaClient`/`FakeOpcDaClient` 同步）；`DataBridge` 非 Good 时 `daQuality = quality==Good ? "Bad" : quality.ToString()`、`ModbusStatus="BadQuality"`，Uncertain 时 MB 值保持不变
+- **csproj 乱码**：`OpcDaToModbusGateway.csproj` GBK→UTF-8+BOM（0 FFFD）
+- **死代码**：删 `MainForm.ParseModbusAddress`、`OpcQualityHelper.IsGood`（被 Quality 改造孤儿化）、`ItemSelectionDialog.InferRegisterType`/`FormatModbusAddress`（私有无调用者）
+- **Watchdog 重复日志**：`Program.cs` 加 `waitingForManualStartLogged` 一次性日志，`Rearm`/`Restart` 复位
+- **CSV 导入健壮性**：映射/点表导入统一跳过全逗号分隔空行（`line.Trim(',')` 判空），修复表头误判导致的导入错位与幽灵记录（映射导入 `",,,,,,"` 被当表头抛"序号/TagKey 格式无效"；点表导入 `",,,,"` 使真实表头变幽灵数据行 `ItemId="ItemId"`）
+- **已核实驳回的误报**：#2 子代理称存在旧 9 列 Modbus 映射格式需列平移——`git show 472c1b3` 证实 V1.9.0 导出为 UA 格式与 5 列点表，无 9 列 Modbus 格式；#6 `BtnOK_Click` 地址溢出已有显式守卫且调用方有 catch
+- **CI 恢复**：新建 `.github/workflows/build.yml`（restore → build → test → 打包 → `softprops/action-gh-release@v2`）
 
-### 3.7 开发指南结构化重写
-- `OPC_DA转ModbusTCP网关开发指南.md` 以 V2.0.0 当前代码为事实源重建，共 13 章（约 736 行）
-- 清除正文中 V1.x 旧实现描述；完整版本历史表保留（2.0.0 → 1.0.0）
-- 明确纠偏：四项目组成、TagKey 持久化、String/DateTime 拒绝、Quality 三态 helper 但桥接仅 bool、tags.json 不参与 watcher 热重载、DA 首次失败可降级运行
-
-### 3.8 V2.0.0 变更集审查修复（子代理复核 6 项）
-- **#1（HIGH，确认）** 映射导出 `",,,,,,"` 分隔行被导入误当表头 → 数据行错位抛"序号/TagKey 格式无效"。已修：`MainForm.BtnImportCsvMapping_Click` 起始行扫描与数据循环均跳过全逗号行（`line.Trim(',')` 判空）
-- **#2（否）** 子代理称存在旧 9 列 Modbus 映射格式需列平移——已用 `git show 472c1b3` 核实：V1.9.0 导出为 UA 格式与 5 列点表，从未有 9 列 Modbus 映射；文档定义"旧格式"= 同 7 列布局下的纯数字序号身份（`MappingCsvIdentity.ValidateLegacyItemIds`），现有导入已正确处理
-- **#3（确认）** 点表导出 `",,,,"` 分隔行被导入当"首个非注释行"→ 真实表头变幽灵数据行（ItemId="ItemId"）。已修：`ItemSelectionDialog.BtnImportCsv_Click` 跳过全逗号行
-- **#4（保留）** 默认监听 localhost→0.0.0.0 属 V2.0.0 有意设计（ConfigManager.cs:217 注释 + hard constraint #5），用户确认保持 0.0.0.0
-- **#5（确认）** `ItemSelectionDialog` 私有方法 `InferRegisterType`/`FormatModbusAddress` 无任何调用者，已删除（`MainForm.FormatModbusAddress` 在用，未动）
-- **#6（否）** `BtnOK_Click` 地址溢出已有显式守卫（`nextAddress + width - 1 > ushort.MaxValue` 抛 `InvalidOperationException`），且 MainForm 调用方有 catch → 无未捕获溢出
-
-### 3.9 版本升级至 V2.1.0（2026-08-06）
-- 三个生产项目（主程序、Watchdog、Keygen）`Version=2.1.0`、`AssemblyVersion/FileVersion=2.1.0.0`
-- `AppConstants.AppVersion = "2.1.0"`，Keygen banner 同步（v2.1.0）
-- 版本历史：README、开发指南、handoff 顶部当前版本与版本历史表首行已更新（新增 2.1.0 行，2.0.0 及更早历史行保留）
-- 开发指南正文版本边界切换至 V2.1.0，核心变更新增 CSV 导入健壮性/死代码清理/CI 恢复条目，测试分布更新为 33 项（ModbusCorrectnessTests 24、OpcQualityTests 5、ConfigMigrationTests 2、WatchdogRestartPolicyTests 2）
+### 3.5 版本升级至 V2.1.0（2026-08-06）
+- 三个生产项目 `Version=2.1.0`、`AssemblyVersion/FileVersion=2.1.0.0`；`AppConstants.AppVersion="2.1.0"`；Keygen banner `v2.1.0`
+- README/开发指南/handoff 顶部当前版本与版本历史表首行已更新（2.0.0 及更早历史行保留）；开发指南版本边界切换至 V2.1.0
+- config.json 完成 OpcUa→ModbusTcp 迁移并净化（去除运行时测试污染：Knight demo、a.a.g/f/e 测试标签）
+- 已提交 `e64dbef`：51 文件，+3512/−2606
 
 ---
 
@@ -101,25 +84,27 @@
 | `OpcDaToModbusGateway.csproj` | 主项目，net472/x86，Version 2.1.0；Costura.Fody 嵌入依赖 |
 | `AppConstants.cs` | 全局常量，AppVersion=2.1.0 |
 | `Models/DataTypeConverter.cs` | DA 类型解析、Modbus 类型规范化、宽度/高 word 编码 |
-| `Models/OpcQualityHelper.cs` | OPC Quality 高两位三态分类 |
+| `Models/OpcQualityHelper.cs` | OPC Quality 高两位三态分类（仅 `Classify`）|
 | `Models/ModbusWriteResult.cs` | Modbus 写入结果枚举与错误消息 |
 | `Models/SnapshotData.cs` | TagSnapshot：DA/MB 分离字段 |
-| `Models/TagConfig.cs` | 标签配置、TagKey 持久化、有效宽度 |
+| `Models/TagConfig.cs` | 标签配置、TagKey 持久化、有效宽度、`OpcDaConfig`/`ModbusTcpConfig`/`AppConfig` |
 | `Models/LicenseAlgorithm.cs` | PCID + HMAC-SHA256 授权码（三层 XOR 混淆）|
-| `OpcDaClient.cs` | OPC DA 客户端：订阅/轮询、CanonicalDataType 回写、Quality 传播 |
-| `DataBridge.cs` | DA → Modbus 桥接：显式写入结果、分离快照、Start 幂等 |
+| `OpcDaClient.cs` | OPC DA 客户端：订阅/轮询、CanonicalDataType 回写、Quality 三态传播 |
+| `DataBridge.cs` | DA → Modbus 桥接：显式写入结果、分离快照、Start 幂等、动态补注册 |
 | `GatewayModbusTcpServer.cs` | NModbus TCP 从站：声明类型编码、写结果、锁保护 |
 | `Services/GatewayManager.cs` | 生命周期管理：三阶段启动、降级运行、CheckHealth 重连、映射校验 |
 | `Services/ConfigManager.cs` | config.json/tags.json 原子保存、迁移、热重载 watcher |
 | `Services/WatchdogManager.cs` | 看门狗子进程管理、心跳、SignalGracefulExit |
+| `Services/MappingCsvIdentity.cs` | CSV 序号与 TagKey 编码/解析、旧格式兼容校验 |
+| `Services/Interfaces/IOpcDaClient.cs` 等 | 三个接口 + `FakeOpcDaClient`（测试桩）|
 | `Watchdog/Program.cs` | 看门狗进程主循环、重启策略执行 |
 | `Watchdog/WatchdogRestartPolicy.cs` | 优雅退出状态机（可测试纯逻辑）|
-| `Services/MappingCsvIdentity.cs` | CSV 序号与 TagKey 编码/解析、旧格式兼容校验 |
-| `Tests/` | MSTest 测试项目（33 项）|
-| `config.json` | 网关配置（不含 Tags）|
+| `Tests/` | MSTest 测试项目（33 项：ModbusCorrectness 24 / OpcQuality 5 / Config 2 / Watchdog 2）|
+| `config.json` | 网关配置（不含 Tags，Tags 存 tags.json）|
 | `tags.json` | 标签配置（运行时生成/迁移）|
 | `README.md` | 项目说明与版本历史 |
 | `OPC_DA转ModbusTCP网关开发指南.md` | V2.1.0 结构化开发指南（13 章）|
+| `.github/workflows/build.yml` | Windows CI（restore→build→test→打包发布）|
 | `docs/superpowers/specs|plans/` | 各轮设计文档与实施计划 |
 
 ---
@@ -148,7 +133,8 @@
 8. **窗口样式**：`FormBorderStyle = FormBorderStyle.FixedSingle` + `MaximizeBox = false`（主窗体禁止最大化）
 9. **支持的 Modbus wire type**：Bool/Byte/SByte/Int16/UInt16/Int32/UInt32/Float/Double；**String/DateTime 没有 wire encoding，启动时拒绝**
 10. **多字节编码**：高 word 在前；不支持配置 byte/word swap
-11. **Quality 传播**：helper 识别三态，但 `IOpcDaClient.OnDataChanged` 当前仅传 `bool isGood`，Uncertain 与 Bad 统一按非 Good 处理（若需三态贯通 UI，必须同步改接口和快照）
+11. **Quality 传播**：`IOpcDaClient.OnDataChanged` 签名 `(string, object, OpcQualityKind, DateTime)` 三态；`OpcQualityHelper.Classify` 按高两位分类；`DataBridge` 区分 Good / Uncertain / Bad（非 Good 时 `daQuality` 显示质量名、`ModbusStatus="BadQuality"`，Uncertain 时 MB 值保持不变）
+12. **版本号五处修改点**：三个 csproj（`Version`/`AssemblyVersion`/`FileVersion`）+ `AppConstants.AppVersion` + `Keygen/Program.cs` banner，必须同步，勿全局字符串替换
 
 ---
 
@@ -162,33 +148,41 @@
 - ~~版本升级采用全局字符串替换~~ → 会篡改历史记录；改为精准升级，历史行保留
 - ~~开发指南继续局部打补丁~~ → 正文 V1.x 描述与当前行为矛盾过多，采用结构化整篇改写
 - ~~依据 grep 乱码输出做转码~~ → 乱码属工具显示层解码错配，盲目转码会造成二次损坏
+- ~~提交 config.json 运行时版本~~ → config.json 会被程序改写（测试标签、AutoStart 等），提交前必须净化到迁移后默认值
+- ~~提交 `.reasonix/` 目录~~ → 本地工具元数据，不入库（用 `git add -A -- . ':!.reasonix'` 排除）
 
 ---
 
 ## 7. 当前风险
+
 ### 🔴 P0 项：尚未运行时验证
 - 构建与单测通过，但**未连接真实 OPC DA 服务器 + Modbus TCP 客户端进行端到端测试**。
-- 验证方式：启动程序 → 连接 Matrikon OPC Simulation 或 Knight OPC Server Demo → 添加标签 → 启动 Modbus TCP → 用 Modbus Poll 或 Modscan 连接 `0.0.0.0:502`，读取映射地址，确认数据正确；验证 Good/Bad Quality 传播、DA 断线重连、看门狗拉起。
+- 验证方式：启动程序 → 连接 Matrikon OPC Simulation 或 Knight OPC Server Demo → 添加标签 → 启动 Modbus TCP → 用 Modbus Poll 或 Modscan 连接 `0.0.0.0:502`，读取映射地址，确认数据正确；验证 Good/Uncertain/Bad Quality 传播、DA 断线重连、看门狗拉起。
+
 ### 🟡 P1 项：发布治理与安全边界
 - **发布包隔离**：主项目构建仍会构建并复制 Keygen 到输出目录；客户发布包应使用白名单，不随包下发 Keygen。
 - **Modbus 写入风险**：服务创建可读写 slave 并暴露 `0.0.0.0:502`；外部客户端可写寄存器，生产网络需用防火墙/ACL 限定访问范围。
 - **授权算法**：HMAC 共享密钥方案，深度逆向可被破解（源码已注明），长期应迁移 ECDSA 非对称签名。
-### 🟡 P2 项：已知限制（文档已列）
+
+### 🟡 P2 项：已知限制
 - `tags.json` 外部修改不会触发当前 watcher 热重载（仅监听 config.json）。
 - 无 Modbus 写回 OPC DA 支持（当前为 DA → Modbus 只读方向）。
+- README 第 87/110 行仍引用已删除的 `使用文档.md`（V2.0.0 文档整合时删除，README 引用未同步）——后续清理文档时需修正。
 - `csharp-ls` 对 net472/WinForms 项目存在基础引用级联误报；实际 MSBuild/MSTest 通过，调试诊断需以构建为准。
 
 ---
 
 ## 8. 已经跑过的测试
+
 | 测试项 | 结果 | 备注 |
 |--------|------|------|
-| Release 构建 | ✔ 通过 | 0 错误 0 警告 |
-| MSTest（net472/x86）| ✔ 33/33 通过 | 编码、宽度、Quality、迁移、Watchdog、快照 |
+| Release 构建（V2.1.0，提交后复验）| ✔ 通过 | 0 错误 0 警告 |
+| MSTest（net472/x86）| ✔ 33/33 通过 | ModbusCorrectness 24 / OpcQuality 5 / Config 2 / Watchdog 2 |
+| exe 程序集版本 | ✔ 2.1.0.0 | 三个 exe FileVersion 均确认 |
 | CSV 格式验证 | ✔ 通过 | GBK 编码，WPS 打开列分隔正常 |
 | 导出点表格式 | ✔ 通过 | 首行固定格式 + 表头，Single→float |
 | 导出映射格式 | ✔ 通过 | 7 列表格 + TagKey 身份，无 sep=, |
-| 导入映射 | ✔ 通过 | 新格式按 TagKey，旧格式仅无重复时兼容 |
+| 导入映射 | ✔ 通过 | 新格式按 TagKey；旧格式仅无重复时兼容；全逗号分隔行已修复 |
 | 配置迁移 | ✔ 通过 | 旧内容 Tags 迁移不丢，写失败回滚 |
 | Modbus 端口监听 | ✔ 通过 | netstat 确认 502 端口监听（历史验证） |
 | 端到端运行时验证 | ❌ 未进行 | P0 阻塞项 |
@@ -196,6 +190,7 @@
 ---
 
 ## 9. 下一步计划
+
 优先级从高到低：
 
 1. **P0 项：运行时端到端验证**
@@ -213,6 +208,7 @@
    - 日志清理与轮转验证
    - 大数据量监控表格虚拟模式性能
    - `tags.json` 热重载支持（需扩展 watcher 范围并处理与运行中映射的一致性）
+   - 清理 README 对已删除 `使用文档.md` 的引用
 
 ---
 
@@ -220,20 +216,23 @@
 
 ```
 继续开发 OPC DA → Modbus TCP 网关项目。工作目录：D:\Documents\Reasonix\OpcDa2Modbus
-版本：V2.1.0
+版本：V2.1.0（HEAD=e64dbef，已提交）
 
 请先读取 handoff.md 确认上下文。
 当前状态：
 - Release 构建通过，0 错误 0 警告；MSTest 33/33 通过。
-- V2.0.0 数据正确性与可靠性修复已完成，开发指南已结构化重写；V2.1.0 已完成 CSV 导入健壮性修复与版本升级。
-- V2.0.0 变更集子代理审查 6 项已全部处理（2 项修复、2 项核实为否、1 项保留默认、1 项删死代码）。
-- 工作区存在大量未提交改动（涉及多轮功能与修复），历史记录与 hard constraints 已保留。
+- V2.1.0 已提交（含 V2.0.0 变更集审查修复 + CSV 导入健壮性 + CI 恢复 + 版本升级）。
+- 工作区干净，仅 .reasonix/（本地工具元数据）未跟踪，勿提交。
 - P0 阻塞项：尚未进行真实 OPC DA 服务器 + Modbus 客户端端到端验证。
 下一步任务：
 1. P0：运行时端到端验证（连接真实 DA 服务器，用 Modbus 客户端工具验证数据转发）
 2. P1：发布治理（发布包隔离、网络边界、授权方案评估）
 3. P2：可选优化（看门狗现场验证、日志轮转、tags.json 热重载等）
-编译命令：dotnet build --configuration Release
-测试命令：dotnet test Tests/OpcDaToModbusGateway.Tests.csproj -c Release -p:PlatformTarget=x86
+关键经验：
+- 版本升级改 5 处：三个 csproj（Version/AssemblyVersion/FileVersion）+ AppConstants.AppVersion + Keygen banner，再更新三份文档版本历史
+- 含中文文件一律用 Python（显式 encoding）或纯 ASCII 命令编辑，防 GBK 往返损坏
+- config.json 提交前净化到迁移后默认值（去掉运行时测试污染）
+编译命令：dotnet build OpcDaToModbusGateway.sln -c Release
+测试命令：dotnet test Tests/OpcDaToModbusGateway.Tests.csproj -c Release
 输出目录：bin\Release\net472\OpcDaToModbusGateway.exe
 ```

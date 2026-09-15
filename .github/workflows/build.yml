@@ -1,4 +1,4 @@
-name: Build OpcDaToModbusGateway
+﻿name: Build OpcDaToModbusGateway
 
 on:
   push:
@@ -44,17 +44,25 @@ jobs:
       - name: Test (Release)
         run: dotnet test Tests/OpcDaToModbusGateway.Tests.csproj -c Release --no-build
 
-      - name: 打包版本化产物
+      - name: 打包版本化产物（客户发布包不含 Keygen）
         shell: pwsh
         run: |
           $v = '${{ steps.version.outputs.APP_VERSION }}'
           $rel = "OpcDaToModbusGateway-v$v"
           New-Item -ItemType Directory -Force -Path $rel | Out-Null
           if (Test-Path bin/Release/net472)         { Copy-Item bin/Release/net472/* $rel -Recurse -Force }
-          if (Test-Path Keygen/bin/Release/net472)  { New-Item -ItemType Directory -Force -Path "$rel/Keygen"  | Out-Null; Copy-Item Keygen/bin/Release/net472/*  "$rel/Keygen"  -Recurse -Force }
           if (Test-Path Watchdog/bin/Release/net472){ New-Item -ItemType Directory -Force -Path "$rel/Watchdog" | Out-Null; Copy-Item Watchdog/bin/Release/net472/* "$rel/Watchdog" -Recurse -Force }
+          # 客户发布包：删除 Keygen（默认构建不生成，双保险）
+          Remove-Item "$rel/OpcDaToModbusGateway.Keygen.exe" -ErrorAction SilentlyContinue
           Compress-Archive -Path $rel -DestinationPath "$rel.zip" -Force
-          Write-Host "已生成版本化包: $rel.zip"
+          Write-Host "已生成客户发布包: $rel.zip"
+
+          # 内部工具包：单独打包 Keygen，不与发布包合并
+          $internal = "OpcDaToModbusGateway-v$v-internal-tools"
+          New-Item -ItemType Directory -Force -Path $internal | Out-Null
+          if (Test-Path Keygen/bin/Release/net472) { Copy-Item Keygen/bin/Release/net472/* "$internal/Keygen" -Recurse -Force }
+          Compress-Archive -Path $internal -DestinationPath "$internal.zip" -Force
+          Write-Host "已生成内部工具包: $internal.zip"
 
       - name: 上传构建产物 (Artifact)
         uses: actions/upload-artifact@v4
@@ -63,11 +71,20 @@ jobs:
           path: bin/Release/net472/
           if-no-files-found: warn
 
+      - name: 上传内部工具包 (Artifact, 含 Keygen)
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpcDaToModbusGateway-v${{ steps.version.outputs.APP_VERSION }}-internal-tools
+          path: OpcDaToModbusGateway-v${{ steps.version.outputs.APP_VERSION }}-internal-tools.zip
+          if-no-files-found: warn
+
       - name: 创建 GitHub Release（仅打 v* tag 时）
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           name: OpcDaToModbusGateway v${{ steps.version.outputs.APP_VERSION }}
-          files: OpcDaToModbusGateway-v${{ steps.version.outputs.APP_VERSION }}.zip
+          files: |
+            OpcDaToModbusGateway-v${{ steps.version.outputs.APP_VERSION }}.zip
+            OpcDaToModbusGateway-v${{ steps.version.outputs.APP_VERSION }}-internal-tools.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
