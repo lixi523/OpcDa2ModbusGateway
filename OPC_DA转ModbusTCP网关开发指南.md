@@ -1,14 +1,21 @@
 # OPC DA 转 Modbus TCP 网关开发指南
 
-**版本：2.1.0**
+**版本：2.2.0**
 
 ---
 
-## 1. 文档范围与 V2.1.0 版本边界
+## 1. 文档范围与 V2.2.0 版本边界
 
-本文档以 V2.1.0 当前源码与 33 项 MSTest 回归测试为事实源，完整描述 `OpcDaToModbusGateway` 网关的架构、数据通路、配置格式、CSV 硬约束、看门狗协议与构建部署方式。
+本文档以 V2.2.0 当前源码与 33 项 MSTest 回归测试为事实源，完整描述 `OpcDaToModbusGateway` 网关的架构、数据通路、配置格式、CSV 硬约束、看门狗协议与构建部署方式。
 
-**版本边界：** 正文全部描述 V2.1.0 的实际行为，不包含 V1.x 旧实现描述（例如旧的 UA 残留、旧的 8 列点表导出格式、TagKey 不持久化等均已清除）。各版本差异仅在「第 13 章 完整版本历史」中保留。
+**版本边界：** 正文全部描述 V2.2.0 的实际行为，不包含 V1.x 旧实现描述（例如旧的 UA 残留、旧的 8 列点表导出格式、TagKey 不持久化等均已清除）。各版本差异仅在「第 13 章 完整版本历史」中保留。
+
+**V2.2.0 的核心变更（相对 V2.1.0）：**
+
+- P0 端到端验证：真实 OPC DA 服务器（Knight.OPC.Server.Demo）+ Modbus TCP 客户端 42 标签全量读验证，各类型数据转发正确；
+- P1-1 发布包隔离：Keygen 源码移出仓库（本地保留 + `.gitignore`），主程序默认构建/CI 客户发布包不含 Keygen；
+- P1-2 Modbus 网络边界：默认监听地址 `0.0.0.0` → `127.0.0.1`（仅本机回环，外部访问需显式配置）；
+- 提交 `docs/archify` 架构图。
 
 **V2.1.0 的核心变更（相对 V2.0.0）：**
 
@@ -38,28 +45,28 @@
 - **权限：** `app.manifest` 声明 `requestedExecutionLevel="requireAdministrator"`，要求以管理员权限运行（确保 OPC DA COM 组件与 Modbus TCP 端口 502 可正常访问）。
 - **前置条件：** 目标 OPC DA 服务器的 COM 组件已正确注册（32 位注册表视图）。
 
-### 2.2 四项目组成
+### 2.2 项目组成
 
-解决方案 `OpcDaToModbusGateway.sln` 包含 **四个** 项目：
+解决方案 `OpcDaToModbusGateway.sln` 包含 **三个** 项目：
 
 | 项目 | 输出 | 类型 | 用途 |
 |---|---|---|---|
 | OpcDaToModbusGateway | OpcDaToModbusGateway.exe | WinForms（WinExe） | 主程序：UI、DA 客户端、Modbus TCP 服务器、数据桥接、授权管理、看门狗管理 |
 | OpcDaToModbusGateway.Watchdog | OpcDaToModbusGateway.Watchdog.exe | WinExe（无 UI） | 独立进程：监控主程序并自动重启（崩溃/挂起） |
-| OpcDaToModbusGateway.Keygen | OpcDaToModbusGateway.Keygen.exe | 控制台（Exe） | 授权码计算工具：根据 PCID 生成授权码 |
-| OpcDaToModbusGateway.Tests | 测试程序集 | MSTest | net472/x86 单元测试，29 项，覆盖编码、质量、配置迁移、看门狗重启策略 |
+| OpcDaToModbusGateway.Tests | 测试程序集 | MSTest | net472/x86 单元测试，33 项，覆盖编码、质量、配置迁移、看门狗重启策略 |
 
-**注意：** `.sln` 中 Watchdog 与 Keygen 项目仅保留 `ActiveCfg`（无 `Build.0` 行），避免解决方案级别重复构建子项目；它们由主项目的 MSBuild Target 在编译前自动构建。
+**Keygen 授权码计算工具源码不随仓库分发（本地维护，`.gitignore` 排除），不在解决方案中。**
+
+**注意：** `.sln` 中 Watchdog 项目仅保留 `ActiveCfg`（无 `Build.0` 行），避免解决方案级别重复构建；由主项目的 MSBuild Target 在编译前自动构建。
 
 ### 2.3 部署产物
 
-主项目编译（`dotnet build OpcDaToModbusGateway.csproj -c Release`）会自动触发 Watchdog 与 Keygen 构建并复制 exe 到主输出目录。最终部署清单：
+主项目编译（`dotnet build OpcDaToModbusGateway.csproj -c Release`）会自动触发 Watchdog 构建并复制 exe 到主输出目录（Keygen 已移除出仓库，不再自动构建）。最终部署清单：
 
 ```
 OpcDaToModbusGateway.exe              # 主程序（Costura.Fody 已嵌入全部托管依赖 DLL）
 OpcDaToModbusGateway.exe.config       # .NET 运行时声明（必须随 exe 部署）
 OpcDaToModbusGateway.Watchdog.exe     # 看门狗进程（与主程序同目录）
-OpcDaToModbusGateway.Keygen.exe       # 授权码计算工具（管理员使用）
 config.json                           # 网关配置（需随程序一起部署）
 tags.json                             # 标签配置（首次启动迁移后生成）
 app.ico                               # 应用图标
@@ -639,7 +646,7 @@ while (true):
 - 试用到期 → `GatewayStopRequested` → MainForm 停止网关、禁用启动、提示后退出（`_forceClose=true`）；
 - `ApplyAuthorizationCode(authCode)` 验证成功 → 停止试用计时器、保存授权码。
 
-**Keygen（控制台）：** 交互模式（查看本机 PCID / 输入 PCID 生成授权码）与命令行模式（`Keygen.exe <PCID>` 直接输出）；stdin EOF 安全退出；通过 `<Compile Include="..\Models\LicenseAlgorithm.cs">` 链接主项目算法，保证实现一致。
+**Keygen（控制台，源码不随仓库分发，本地维护）：** 交互模式（查看本机 PCID / 输入 PCID 生成授权码）与命令行模式（`Keygen.exe <PCID>` 直接输出）；通过链接主项目 `Models/LicenseAlgorithm.cs` 保证实现一致。
 
 ### 11.2 构建
 
@@ -649,16 +656,16 @@ dotnet build-server shutdown      # 关闭 Roslyn 编译器缓存（防 MSB3030 
 rm -rf obj bin
 dotnet build -c Release --no-incremental
 
-# 仅构建主项目（自动触发看门狗和 Keygen 构建）
+# 仅构建主项目（自动触发看门狗构建）
 dotnet build OpcDaToModbusGateway.csproj -c Release
 
 # 运行测试
 dotnet test Tests/OpcDaToModbusGateway.Tests.csproj -c Release
 ```
 
-- 版本号在三个生产项目 csproj（主程序、Watchdog、Keygen）中统一管理：`<Version>2.1.0</Version>`、`<AssemblyVersion>2.1.0.0</AssemblyVersion>`、`<FileVersion>2.1.0.0</FileVersion>`；
-- 主项目两个自定义 MSBuild Target（`BeforeTargets="Build"`）：`BuildAndCopyWatchdog`、`BuildAndCopyKeygen`——先 `dotnet build` 子项目再复制 exe 到主输出目录；
-- `<Compile Remove="Watchdog\**" />`、`Keygen\**`、`Tests\**` 排除子目录源码，防 CS0579 重复程序集属性；
+- 版本号在两个生产项目 csproj（主程序、Watchdog）中统一管理：`<Version>2.2.0</Version>`、`<AssemblyVersion>2.2.0.0</AssemblyVersion>`、`<FileVersion>2.2.0.0</FileVersion>`，另加 `AppConstants.AppVersion`；
+- 主项目自定义 MSBuild Target（`BeforeTargets="Build"`）：`BuildAndCopyWatchdog`——先 `dotnet build` 子项目再复制 exe 到主输出目录；（Keygen 已移除出仓库，无对应 Target）
+- `<Compile Remove="Watchdog\**" />`、`Tests\**` 排除子目录源码，防 CS0579 重复程序集属性；
 - **Costura.Fody（5.7.0）：** `FodyWeavers.xml` 嵌入 Newtonsoft.Json、TitaniumAS.Opc.Client、NModbus、System.Diagnostics.DiagnosticSource、Common.Logging、Common.Logging.Core；嵌入后主 exe 约 2MB，输出目录无第三方 DLL（`<PrivateAssets>all</PrivateAssets>`）。
 
 ### 11.3 测试（33 项 MSTest）
@@ -681,7 +688,7 @@ dotnet test Tests/OpcDaToModbusGateway.Tests.csproj -c Release
 3. 启动网关：日志依次输出 `[1/3]` `[2/3]` `[3/3]`；DA 失败时 Modbus 仍监听（橙色状态 + 自动重连）；
 4. 用 Modbus Poll / Modscan 连接 `0.0.0.0:502`（从站 ID 1），按 `3x0001` 等地址读取并核对值与质量；
 5. 勾选「进程守护」验证崩溃自动拉起与托盘退出不重启；
-6. 授权：Keygen 生成授权码 → 关于窗口输入 → 状态变「已授权」。
+6. 授权：授权方通过内部工具生成授权码 → 关于窗口输入 → 状态变「已授权」。
 
 ---
 
@@ -719,6 +726,7 @@ dotnet test Tests/OpcDaToModbusGateway.Tests.csproj -c Release
 
 | 版本 | 日期 | 变更 |
 |---|---|---|
+| 2.2.0 | 2026-09-15 | **P0 端到端验证 + P1 发布治理与安全边界**：① P0 完成真实 OPC DA 服务器（Knight.OPC.Server.Demo）+ Modbus TCP 客户端 42 标签全量读验证，各类型数据转发正确、Double 实时变化；② P1-1 发布包隔离：Keygen 源码移出仓库（本地保留 + .gitignore），主程序默认构建/CI 客户发布包不含 Keygen；③ P1-2 Modbus 网络边界：默认监听地址 `0.0.0.0` → `127.0.0.1`（仅本机回环）；④ 提交 `docs/archify` 架构图。版本统一升级至 2.2.0。编译 0 警告 0 错误。 |
 | 2.1.0 | 2026-08-06 | **CSV 导入健壮性修复 + 工程治理**：映射 CSV 导入将全逗号分隔空行误当表头导致数据行错位、点表 CSV 导入将 `",,,,"` 分隔行当首行导致真实表头变为幽灵数据行，两处导入现统一跳过全逗号空行（`line.Trim(',')` 判空）；删除点表浏览对话框遗留死代码（InferRegisterType/FormatModbusAddress）；恢复 Windows CI（restore → build → test → 打包发布）；net472/x86 回归测试增至 33 项。版本统一升级至 2.1.0。编译 0 警告 0 错误。 |
 | 2.0.0 | 2026-08-02 | **数据正确性与可靠性里程碑**：统一 Modbus 声明类型、寄存器宽度与高 word 编码，自动地址按四个地址空间分配并校验；配置迁移原子保存并加固热重载；OPC Quality 正确传播 Good/Uncertain/Bad，转换与 Modbus 写入显式报告失败；DA/Modbus 快照分离；修复看门狗优雅退出、重新武装与配置 watcher 并发问题；net472/x86 回归测试增至 29 项。 |
 | 1.9.0 | 2026-07-20 | **全面代码审查 + 启动卡顿最终修复 + DA模式切换 + CSV导出标准化**：① DataBridge.StartAsync 异步启动（Task.Run 后台线程创建映射 + SynchronizationContext.Post 进度回调），3.5 万节点场景窗口保持响应；② 新增 DA 数据获取方式选择（异步订阅/同步轮询），UI 下拉框 + 配置持久化；③ 首次运行默认填充 ProgId Matrikon.OPC.Simulation.1，开箱即用；④ 未选择服务器时禁用获取点位和启动网关按钮；⑤ Boolean 类型转换增强（支持字符串 true/1/yes 等）；⑥ SourceTimestamp 单调递增修复（bool 翻转标签可被正确检测）；⑦ Dispose 后重连检查、Monitor.Exit 安全检查、SafeInvoke 句柄防护；⑧ ConfigManager 实现 IDisposable；⑨ 版本号 1.5.0 → 1.9.0；⑩ 删除 PLAN.md（文档整合完成）；⑪ OPC DA 点位浏览导出 CSV 格式对齐模板（A1-A4 固定文本、C3 填点位数、表头 序号,ItemId,DisplayName,DataType,描述）；⑫ 导出映射 CSV 格式优化（删除 sep=,、去除多余空格、GBK 编码兼容 WPS）；⑬ OPC DA 标签类型 Single 导出时转换为 float；⑭ 清理 UA 残留代码（重命名配置节点、移除 UA 专属字段、更新窗口标题）；⑮ 代码审查修复（线程安全锁、接口依赖注入、Modbus 大端序转换、TcpListener.ExclusiveAddressUse、NModbus CreateSlaveNetwork 正确用法）；⑯ 禁用主窗体最大化按钮（FormBorderStyle.FixedSingle + MaximizeBox=false）；⑰ 替换应用图标为 opc-da-modbus-tcp.ico；⑱ 默认监听地址 0.0.0.0、默认端口 502、自动启动 Modbus 服务。编译 0 警告 0 错误。 |
@@ -739,7 +747,7 @@ dotnet test Tests/OpcDaToModbusGateway.Tests.csproj -c Release
 | 1.3.3 | 2026-06-15 | 全面优化：线程安全（volatile+lock）、性能（类型缓存）、资源（IDisposable）、设计（TextBoxExtensions 共享提取） |
 | 1.3.2 | 2026-06-15 | LogManager 异步日志写入：BlockingCollection 队列 + 后台线程模式 |
 | 1.3.1 | 2026-06-15 | MainForm 职责拆分：提取 LogManager/ConfigManager/WatchdogManager/GatewayManager 四个独立服务类 |
-| 1.3.0 | 2026-06-12 | 授权码机制（PCID + HMAC-SHA256）、30 分钟试用倒计时、Keygen 工具 |
+| 1.3.0 | 2026-06-12 | 授权码机制（PCID + HMAC-SHA256）、30 分钟试用倒计时、Keygen 工具（V2.2.0 起源码不随仓库分发） |
 | 1.2.0 | 2026-06-12 | 单实例限制、Modbus TCP 可配置设置（监听地址/端口/从站ID）、Costura.Fody DLL 嵌入 |
 | 1.1.0 | - | TagKey 机制、DataBridge 线程安全、COM 泄漏修复、异步关闭、BrowseAllItems 去重移除 |
 | 1.0.0 | - | 初始版本：DA→Modbus TCP 网关、看门狗、系统托盘、日志、配置管理 |

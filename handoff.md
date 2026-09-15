@@ -1,9 +1,9 @@
 # Handoff：OPC DA → Modbus TCP 网关
 
-> 生成时间：2026-08-06
-> 版本：V2.1.0
+> 生成时间：2026-09-15
+> 版本：V2.2.0
 > 适用：新窗口继续任务
-> 代码状态：HEAD=`e64dbef`（V2.1.0 已提交）；工作区仅 `.reasonix/` 未跟踪
+> 代码状态：HEAD=`ebc69e5` 之后（V2.2.0 开发中）；工作区含 `.archify/`（已提交 docs/archify）与本地 Keygen/（已 gitignore）
 
 ---
 
@@ -33,9 +33,9 @@
 | 配置持久化与迁移 | ✔ 完成（config.json + tags.json 原子保存，热重载加固）|
 | 看门狗进程 | ✔ 完成（优雅退出状态机 + 重新武装）|
 | 构建与自动化测试 | ✔ Release 0 错误 0 警告；MSTest 33/33 通过；Windows CI 已恢复 |
-| 文档 | ✔ README / 开发指南 / handoff 已更新至 V2.1.0 |
-| 版本发布 | ✔ V2.1.0 已提交 `e64dbef` |
-| **运行时验证（连接真实 DA 服务 + Modbus 客户端读取）** | ❌ **尚未进行（P0 阻塞项）** |
+| 文档 | ✔ README / 开发指南 / handoff 已更新至 V2.2.0 |
+| 版本发布 | ✔ V2.2.0 提交中（含 P0 验证 + P1 治理） |
+| **运行时验证（连接真实 DA 服务 + Modbus 客户端读取）** | ✔ **已完成（P0，2026-09-15）** |
 
 ---
 
@@ -75,14 +75,26 @@
 - config.json 完成 OpcUa→ModbusTcp 迁移并净化（去除运行时测试污染：Knight demo、a.a.g/f/e 测试标签）
 - 已提交 `e64dbef`：51 文件，+3512/−2606
 
+### 3.6 P0 端到端验证完成（2026-09-15）
+- 连接真实 `Knight.OPC.Server.Demo`（TitaniumAS 驱动），42 个标签全部映射成功
+- 原生 Modbus TCP 客户端逐一读取全部 42 标签地址，Double/Int32/UInt32/UInt16/Int16/Boolean 值解码正确，高 word 在前字节序符合规范
+- Double 标签值实时变化（66.58 → 67.70），DA 数据源活跃确认
+- Quality 传播、断线重连、看门狗现场验证因试用授权在 16:42 到期自动关闭 DA 连接而未完成（P2 后续）
+
+### 3.7 V2.2.0 P1 发布治理与安全边界（2026-09-15）
+- **P1-1 发布包隔离**：Keygen 源码移出仓库（`git rm`，本地保留，加 `.gitignore` `/Keygen/`）；主项目默认构建/发布不含 Keygen；CI 客户发布包白名单；sln/csproj 移除 Keygen 项目引用与构建 Target
+- **P1-2 Modbus 网络边界**：默认监听地址 `0.0.0.0` → `127.0.0.1`（仅本机回环）；`GatewayModbusTcpServer`/`ConfigManager`/`TagConfig.GetEffectiveListenAddress`/`GetEndpointUrl`/`MainForm` UI 五处默认值同步；外部访问需显式配置 `0.0.0.0` 或指定内网 IP
+- 提交 `docs/archify/` 架构图（html/json/png）
+- 版本升级至 2.2.0：主程序 + Watchdog csproj（Version/AssemblyVersion/FileVersion）+ AppConstants.AppVersion 共 4 处（Keygen 本地维护，banner 手动对齐）
+
 ---
 
 ## 4. 关键文件
 
 | 文件 | 说明 |
 |------|------|
-| `OpcDaToModbusGateway.csproj` | 主项目，net472/x86，Version 2.1.0；Costura.Fody 嵌入依赖 |
-| `AppConstants.cs` | 全局常量，AppVersion=2.1.0 |
+| `OpcDaToModbusGateway.csproj` | 主项目，net472/x86，Version 2.2.0；Costura.Fody 嵌入依赖 |
+| `AppConstants.cs` | 全局常量，AppVersion=2.2.0 |
 | `Models/DataTypeConverter.cs` | DA 类型解析、Modbus 类型规范化、宽度/高 word 编码 |
 | `Models/OpcQualityHelper.cs` | OPC Quality 高两位三态分类（仅 `Classify`）|
 | `Models/ModbusWriteResult.cs` | Modbus 写入结果枚举与错误消息 |
@@ -103,7 +115,7 @@
 | `config.json` | 网关配置（不含 Tags，Tags 存 tags.json）|
 | `tags.json` | 标签配置（运行时生成/迁移）|
 | `README.md` | 项目说明与版本历史 |
-| `OPC_DA转ModbusTCP网关开发指南.md` | V2.1.0 结构化开发指南（13 章）|
+| `OPC_DA转ModbusTCP网关开发指南.md` | V2.2.0 结构化开发指南（13 章）|
 | `.github/workflows/build.yml` | Windows CI（restore→build→test→打包发布）|
 | `docs/superpowers/specs|plans/` | 各轮设计文档与实施计划 |
 
@@ -127,14 +139,14 @@
    - 不可添加 `sep=,` 首行
    - 不可有多余空格（如 `导出时间:` 后、`Modbus_DataType` 前）
 4. **OPC DA 数据类型检查**：必须从 `OpcDaItem.CanonicalDataType` 获取（在 AddItems 加入 Group 之后），浏览阶段不可信
-5. **Modbus TCP 默认监听**：`0.0.0.0:502`
+5. **Modbus TCP 默认监听**：`127.0.0.1:502`（V2.2.0 起，仅本机回环；需外部访问时显式配置 `0.0.0.0` 或指定内网 IP）
 6. **目标框架**：`net472` + `x86`（OPC DA COM 组件通常为 32 位）
 7. **DLL 嵌入**：使用 Costura.Fody 实现单 EXE 部署
 8. **窗口样式**：`FormBorderStyle = FormBorderStyle.FixedSingle` + `MaximizeBox = false`（主窗体禁止最大化）
 9. **支持的 Modbus wire type**：Bool/Byte/SByte/Int16/UInt16/Int32/UInt32/Float/Double；**String/DateTime 没有 wire encoding，启动时拒绝**
 10. **多字节编码**：高 word 在前；不支持配置 byte/word swap
 11. **Quality 传播**：`IOpcDaClient.OnDataChanged` 签名 `(string, object, OpcQualityKind, DateTime)` 三态；`OpcQualityHelper.Classify` 按高两位分类；`DataBridge` 区分 Good / Uncertain / Bad（非 Good 时 `daQuality` 显示质量名、`ModbusStatus="BadQuality"`，Uncertain 时 MB 值保持不变）
-12. **版本号五处修改点**：三个 csproj（`Version`/`AssemblyVersion`/`FileVersion`）+ `AppConstants.AppVersion` + `Keygen/Program.cs` banner，必须同步，勿全局字符串替换
+12. **版本号修改点**：主程序 + Watchdog 两个 csproj（`Version`/`AssemblyVersion`/`FileVersion`）+ `AppConstants.AppVersion` 共 4 处，必须同步。Keygen 源码不随仓库分发（本地维护），其 `Keygen/Program.cs` banner 需手动对齐，勿全局字符串替换
 
 ---
 
@@ -155,14 +167,14 @@
 
 ## 7. 当前风险
 
-### 🔴 P0 项：尚未运行时验证
-- 构建与单测通过，但**未连接真实 OPC DA 服务器 + Modbus TCP 客户端进行端到端测试**。
-- 验证方式：启动程序 → 连接 Matrikon OPC Simulation 或 Knight OPC Server Demo → 添加标签 → 启动 Modbus TCP → 用 Modbus Poll 或 Modscan 连接 `0.0.0.0:502`，读取映射地址，确认数据正确；验证 Good/Uncertain/Bad Quality 传播、DA 断线重连、看门狗拉起。
+### 🔴 P0 项：运行时验证（已完成 2026-09-15）
+- 构建与单测通过；已连接真实 `Knight.OPC.Server.Demo` + Modbus TCP 客户端完成 42 标签全量读验证，各类型数据转发正确、Double 实时变化。
+- **遗留子项**：Good/Uncertain/Bad Quality 传播、DA 断线自动重连、看门狗拉起因试用授权在验证期间到期自动关闭 DA 而未完成，移入 P2。
 
 ### 🟡 P1 项：发布治理与安全边界
-- **发布包隔离**：主项目构建仍会构建并复制 Keygen 到输出目录；客户发布包应使用白名单，不随包下发 Keygen。
-- **Modbus 写入风险**：服务创建可读写 slave 并暴露 `0.0.0.0:502`；外部客户端可写寄存器，生产网络需用防火墙/ACL 限定访问范围。
-- **授权算法**：HMAC 共享密钥方案，深度逆向可被破解（源码已注明），长期应迁移 ECDSA 非对称签名。
+- **发布包隔离**：✔ 已解决（V2.2.0）。Keygen 源码不随仓库分发（本地维护，`.gitignore` 排除），主程序默认构建/CI 客户发布包均不含 Keygen。
+- **Modbus 网络边界**：✔ 已解决（V2.2.0）。默认监听改为 `127.0.0.1:502`，仅本机可访问；生产部署需外部 SCADA 访问时显式配置 `0.0.0.0` 或指定内网 IP，并配合防火墙/ACL 限定访问范围。
+- **授权算法**：HMAC 共享密钥方案，深度逆向可被破解（源码已注明），长期应迁移 ECDSA 非对称签名（未启动）。
 
 ### 🟡 P2 项：已知限制
 - `tags.json` 外部修改不会触发当前 watcher 热重载（仅监听 config.json）。
@@ -176,16 +188,16 @@
 
 | 测试项 | 结果 | 备注 |
 |--------|------|------|
-| Release 构建（V2.1.0，提交后复验）| ✔ 通过 | 0 错误 0 警告 |
+| Release 构建（V2.2.0）| ✔ 通过 | 0 错误 0 警告 |
 | MSTest（net472/x86）| ✔ 33/33 通过 | ModbusCorrectness 24 / OpcQuality 5 / Config 2 / Watchdog 2 |
-| exe 程序集版本 | ✔ 2.1.0.0 | 三个 exe FileVersion 均确认 |
+| exe 程序集版本 | ✔ 2.2.0.0 | 主程序 + Watchdog 两个 exe FileVersion 确认 |
 | CSV 格式验证 | ✔ 通过 | GBK 编码，WPS 打开列分隔正常 |
 | 导出点表格式 | ✔ 通过 | 首行固定格式 + 表头，Single→float |
 | 导出映射格式 | ✔ 通过 | 7 列表格 + TagKey 身份，无 sep=, |
 | 导入映射 | ✔ 通过 | 新格式按 TagKey；旧格式仅无重复时兼容；全逗号分隔行已修复 |
 | 配置迁移 | ✔ 通过 | 旧内容 Tags 迁移不丢，写失败回滚 |
 | Modbus 端口监听 | ✔ 通过 | netstat 确认 502 端口监听（历史验证） |
-| 端到端运行时验证 | ❌ 未进行 | P0 阻塞项 |
+| 端到端运行时验证 | ✔ 已完成（2026-09-15） | 42 标签全量读通过；Quality/断线/看门狗子项因授权到期移入 P2 |
 
 ---
 
@@ -193,16 +205,8 @@
 
 优先级从高到低：
 
-1. **P0 项：运行时端到端验证**
-   - 启动程序，连接本地 Knight.OPC.Server.Demo（或 Matrikon OPC Simulation）
-   - 浏览标签，确认真实数据类型显示正确（非 Variant）
-   - 启动 Modbus TCP，用 Modbus Poll / Modscan / NModbus 客户端读取映射地址（0x/1x/3x/4x），验证数据转发正确
-   - 验证 Good/Uncertain/Bad Quality 传播、DA 断线自动重连、写失败状态显示
-   - 验证实时数据刷新（监控表格 DA/MB 分列随源变化）
-2. **P1 项：发布治理**
-   - 客户发布包与内部工具隔离（不随包下发 Keygen）
-   - 明确 Modbus 网络访问边界（防火墙/ACL/可配置监听地址）
-   - 评估授权方案迁移 ECDSA 非对称签名
+1. **P0 遗留子项**：完成授权激活后，验证 Good/Uncertain/Bad Quality 传播、DA 断线自动重连、看门狗拉起（2026-09-15 验证时试用授权中途到期导致 DA 自动断开）
+2. **P1 已解决项回顾**：发布包隔离、Modbus 网络边界已在 V2.2.0 完成；授权 ECDSA 迁移仍为长期项
 3. **P2 项：可选优化**
    - 看门狗进程保活与优雅退出现场验证
    - 日志清理与轮转验证
@@ -215,21 +219,21 @@
 ## 10. 新窗口启动提示词
 
 ```
-继续开发 OPC DA → Modbus TCP 网关项目。工作目录：D:\Documents\Reasonix\OpcDa2Modbus
-版本：V2.1.0（HEAD=e64dbef，已提交）
+继续开发 OPC DA → Modbus TCP 网关项目。工作目录：D:\Documents\Code\OpcDa2Modbus
+版本：V2.2.0
 
 请先读取 handoff.md 确认上下文。
 当前状态：
 - Release 构建通过，0 错误 0 警告；MSTest 33/33 通过。
-- V2.1.0 已提交（含 V2.0.0 变更集审查修复 + CSV 导入健壮性 + CI 恢复 + 版本升级）。
-- 工作区干净，仅 .reasonix/（本地工具元数据）未跟踪，勿提交。
-- P0 阻塞项：尚未进行真实 OPC DA 服务器 + Modbus 客户端端到端验证。
+- P0 端到端验证已完成（42 标签真实 DA + Modbus 客户端全量读通过）。
+- P1-1 发布包隔离已完成（Keygen 源码移出仓库，本地保留 + .gitignore）。
+- P1-2 Modbus 网络边界已完成（默认监听 127.0.0.1）。
+- 工作区：.archify/ 已提交 docs/archify；本地 Keygen/ 已 gitignore。
 下一步任务：
-1. P0：运行时端到端验证（连接真实 DA 服务器，用 Modbus 客户端工具验证数据转发）
-2. P1：发布治理（发布包隔离、网络边界、授权方案评估）
-3. P2：可选优化（看门狗现场验证、日志轮转、tags.json 热重载等）
+1. P0 遗留：授权激活后验证 Quality 传播、DA 断线重连、看门狗拉起
+2. P2：看门狗现场验证、日志轮转、tags.json 热重载、README 文档引用清理
 关键经验：
-- 版本升级改 5 处：三个 csproj（Version/AssemblyVersion/FileVersion）+ AppConstants.AppVersion + Keygen banner，再更新三份文档版本历史
+- 版本升级改 4 处：主程序 + Watchdog csproj（Version/AssemblyVersion/FileVersion）+ AppConstants.AppVersion；Keygen 本地 banner 手动对齐，勿全局字符串替换
 - 含中文文件一律用 Python（显式 encoding）或纯 ASCII 命令编辑，防 GBK 往返损坏
 - config.json 提交前净化到迁移后默认值（去掉运行时测试污染）
 编译命令：dotnet build OpcDaToModbusGateway.sln -c Release
