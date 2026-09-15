@@ -50,8 +50,15 @@ jobs:
           $v = '${{ steps.version.outputs.APP_VERSION }}'
           $rel = "OpcDaToModbusGateway-v$v"
           New-Item -ItemType Directory -Force -Path $rel | Out-Null
-          if (Test-Path bin/Release/net472)         { Copy-Item bin/Release/net472/* $rel -Recurse -Force }
-          if (Test-Path Watchdog/bin/Release/net472){ New-Item -ItemType Directory -Force -Path "$rel/Watchdog" | Out-Null; Copy-Item Watchdog/bin/Release/net472/* "$rel/Watchdog" -Recurse -Force }
+          if (Test-Path bin/Release/net472) { Copy-Item bin/Release/net472/* $rel -Recurse -Force }
+          # 看门狗以子目录为准（CI 中 bin/Release/net472 内已含主构建复制的 Watchdog 副本，去重）
+          if (Test-Path Watchdog/bin/Release/net472) {
+            New-Item -ItemType Directory -Force -Path "$rel/Watchdog" | Out-Null
+            Copy-Item Watchdog/bin/Release/net472/* "$rel/Watchdog" -Recurse -Force
+            Remove-Item "$rel/OpcDaToModbusGateway.Watchdog.exe" -ErrorAction SilentlyContinue
+            Remove-Item "$rel/OpcDaToModbusGateway.Watchdog.exe.config" -ErrorAction SilentlyContinue
+            Remove-Item "$rel/OpcDaToModbusGateway.Watchdog.pdb" -ErrorAction SilentlyContinue
+          }
           Compress-Archive -Path $rel -DestinationPath "$rel.zip" -Force
           Write-Host "已生成客户发布包: $rel.zip"
 
