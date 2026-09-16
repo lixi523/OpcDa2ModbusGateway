@@ -150,7 +150,7 @@ namespace OpcDaToModbusGateway
                 _valueCache[tagKey] = CopySnapshot(previous, convertedValue, "Good", timestampText,
                     convertedValue, "Good", timestampText);
                 Interlocked.Increment(ref _totalUpdates);
-                _lastUpdateTime = DateTime.Now;
+                _lastUpdateTime = DateTime.UtcNow;
                 return;
             }
 

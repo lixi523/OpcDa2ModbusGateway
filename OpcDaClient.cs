@@ -62,7 +62,7 @@ namespace OpcDaToModbusGateway
             new ConcurrentDictionary<string, List<string>>();
 
         private Timer _readTimer;
-        private DaAcquisitionMode _lastMode = DaAcquisitionMode.Async;
+        private volatile DaAcquisitionMode _lastMode = DaAcquisitionMode.Async;
 
         // 生命周期锁 + 原子 Disposed 守护
         private readonly object _lifecycleLock = new object();
@@ -366,6 +366,7 @@ namespace OpcDaToModbusGateway
             OpcDaGroup group;
             ConcurrentDictionary<string, OpcDaItem> tagKeyToItem;
             bool connected;
+            var mode = _lastMode;
 
             // H-30 修复：检查 _disposedInt，防止 Cleanup() 释放资源后仍在执行的定时器回调
             //       访问已 Dispose 的 _group/_server，导致 ObjectDisposedException 或竞态崩溃。
@@ -386,6 +387,10 @@ namespace OpcDaToModbusGateway
                 // 同步读取所有点位（从 Device 获取最新值）
                 OpcDaItemValue[] results = group.Read(allItems, OpcDaDataSource.Device);
 
+                // 异步模式下 group.Read() 会触发 ValuesChanged 事件，由 OnValuesChanged 投递 OnDataChanged，
+                // 此处无需再手动投递，避免重复；同步模式下未订阅事件，需手动投递。
+                bool needManualDispatch = mode == DaAcquisitionMode.Sync;
+
                 foreach (OpcDaItemValue value in results)
                 {
                     try
@@ -400,11 +405,17 @@ namespace OpcDaToModbusGateway
                         {
                             string[] keysSnapshot;
                             lock (tagKeys) { keysSnapshot = tagKeys.ToArray(); }
-                            foreach (string tagKey in keysSnapshot)
-                                OnDataChanged?.Invoke(tagKey, value.Value, quality, timestamp);
+                            if (needManualDispatch)
+                            {
+                                foreach (string tagKey in keysSnapshot)
+                                    OnDataChanged?.Invoke(tagKey, value.Value, quality, timestamp);
+                            }
                         }
                     }
-                    catch { }
+                    catch (Exception ex)
+                    {
+                        OnStatusChanged?.Invoke($"[定时同步] 单点位处理异常: {ex.Message}");
+                    }
                 }
             }
             catch (Exception ex)

@@ -7,7 +7,7 @@
   },
   "ModbusTcp": {
     "Port": 502,
-    "ListenAddress": "0.0.0.0",
+    "ListenAddress": "127.0.0.1",
     "SlaveId": 1
   },
   "LastConnectedProgId": "",

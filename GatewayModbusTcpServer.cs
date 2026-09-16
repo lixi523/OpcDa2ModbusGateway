@@ -44,7 +44,16 @@ namespace OpcDaToModbusGateway
         public event Action<string> OnStatusChanged;
         public Action OnConfigChanged { get; set; }
         public bool IsRunning => _isRunning;
-        public int VariableCount => _tagMap.Count;
+        public int VariableCount
+        {
+            get
+            {
+                lock (_lock)
+                {
+                    return _tagMap.Count;
+                }
+            }
+        }
         public byte SlaveId => _config?.SlaveId ?? (byte)1;
 
         public GatewayModbusTcpServer(ModbusTcpConfig config)

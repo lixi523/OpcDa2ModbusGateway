@@ -315,5 +315,12 @@ namespace OpcDaToModbusGateway.Models
 
         /// <summary>授权码，验证通过后保存到配置文件，下次启动时自动验证。</summary>
         public string AuthorizationCode { get; set; }
+
+        /// <summary>
+        /// 试用期起始时间（UTC），用于持久化试用倒计时。
+        /// 首次进入试用模式时写入，授权成功后清空。
+        /// 格式：ISO 8601 UTC，例如 "2026-09-16T10:30:00Z"。
+        /// </summary>
+        public string TrialStartUtc { get; set; }
     }
 }

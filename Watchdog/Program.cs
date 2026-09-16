@@ -227,11 +227,26 @@ namespace OpcDaToModbusGateway.Watchdog
                         break;
                     }
 
-                    // 按进程名查找主进程。注意：进程名不含扩展名，
-                    // 且可能匹配到同名但不同路径的进程。在当前部署场景下
-                    // （单实例网关）这种风险可接受。
+                    // 按进程名查找主进程，并进一步匹配可执行文件完整路径，避免误杀同名不同路径进程。
                     var processes = Process.GetProcessesByName(processName);
-                    bool isRunning = processes.Length > 0;
+                    string currentExePath = Process.GetCurrentProcess().MainModule?.FileName ?? "";
+                    bool isRunning = false;
+                    foreach (var p in processes)
+                    {
+                        try
+                        {
+                            string exePath = p.MainModule?.FileName ?? "";
+                            if (string.Equals(exePath, currentExePath, StringComparison.OrdinalIgnoreCase))
+                            {
+                                isRunning = true;
+                                break;
+                            }
+                        }
+                        catch
+                        {
+                            // 无法获取模块信息（权限不足等），忽略该进程
+                        }
+                    }
 
                     // ── 心跳检测（仅在进程存活且心跳事件可用时执行） ──────
                     // 采用两阶段检测策略：

@@ -159,11 +159,13 @@ namespace OpcDaToModbusGateway
             };
             _cmbDaMode.Items.AddRange(new object[] { "异步订阅", "同步轮询" });
             _cmbDaMode.SelectedIndex = 0;
+            // 使用显式映射而非硬编码下标，防止选项顺序变更导致错误
+            var daModeMap = new Dictionary<int, string> { [0] = "Async", [1] = "Sync" };
             _cmbDaMode.SelectedIndexChanged += (s, ev) =>
             {
-                if (!_isLoadingConfig && Config != null)
+                if (!_isLoadingConfig && Config != null && daModeMap.TryGetValue(_cmbDaMode.SelectedIndex, out var mode))
                 {
-                    Config.OpcDa.Mode = _cmbDaMode.SelectedIndex == 1 ? "Sync" : "Async";
+                    Config.OpcDa.Mode = mode;
                     _configMgr.Save();
                 }
             };

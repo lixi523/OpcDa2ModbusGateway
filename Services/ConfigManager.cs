@@ -58,6 +58,7 @@ namespace OpcDaToModbusGateway.Services
         private readonly object _watchCallbackLock = new object();
         private int _activeWatchCallbacks;
         private readonly ManualResetEventSlim _watchCallbacksIdle = new ManualResetEventSlim(true);
+        private volatile bool _suppressWatch;
 
         /// <summary>当前应用配置对象，Load() 后可读，UI 层可直接修改其属性</summary>
         public AppConfig Config { get; private set; }
@@ -166,19 +167,27 @@ namespace OpcDaToModbusGateway.Services
                 ApplyBackwardCompatDefaults();
                 // N-8: 为尚未分配 TagKey 的标签生成唯一键并持久化。
                 bool keysAssigned = TagConfig.AssignTagKeys(Config.OpcDa?.Tags);
-                if (loadedInlineTags && Config.OpcDa?.Tags?.Count > 0)
+                _suppressWatch = true;
+                try
                 {
-                    if (SaveAllImmediate())
-                        _log?.Append("[配置] 已将内联标签迁移到 tags.json");
-                    else
-                        _log?.Append("[配置] 内联标签迁移失败，已保留原 config.json");
+                    if (loadedInlineTags && Config.OpcDa?.Tags?.Count > 0)
+                    {
+                        if (SaveAllImmediate())
+                            _log?.Append("[配置] 已将内联标签迁移到 tags.json");
+                        else
+                            _log?.Append("[配置] 内联标签迁移失败，已保留原 config.json");
+                    }
+                    else if (keysAssigned)
+                    {
+                        if (SaveAllImmediate())
+                            _log?.Append("[配置] 已为新标签分配 TagKey 并持久化");
+                        else
+                            _log?.Append("[配置] TagKey 持久化失败");
+                    }
                 }
-                else if (keysAssigned)
+                finally
                 {
-                    if (SaveAllImmediate())
-                        _log?.Append("[配置] 已为新标签分配 TagKey 并持久化");
-                    else
-                        _log?.Append("[配置] TagKey 持久化失败");
+                    _suppressWatch = false;
                 }
 
                 // H-40: 启动配置文件监视
@@ -590,6 +599,7 @@ namespace OpcDaToModbusGateway.Services
 
                 _configWatcher.Changed += (s, e) =>
                 {
+                    if (_suppressWatch) return;
                     var debounce = _watchDebounce;
                     if (debounce == null) return;
                     try { debounce.Change(500, Timeout.Infinite); }

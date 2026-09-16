@@ -19,7 +19,7 @@ namespace OpcDaToModbusGateway.Services
 
         private bool _isLicensed;
         private bool _trialExpired;
-        private Stopwatch _trialStopwatch;
+        private DateTime _trialStartUtc;
         private Timer _licenseTimer;
 
         /// <summary>授权状态变化（已授权/试用中/试用到期）。</summary>
@@ -57,6 +57,12 @@ namespace OpcDaToModbusGateway.Services
             if (!string.IsNullOrEmpty(savedCode) && LicenseAlgorithm.VerifyAuthCode(_pcid, savedCode))
             {
                 _isLicensed = true;
+                // 授权成功时清空试用起始时间
+                if (!string.IsNullOrEmpty(_configMgr.Config.TrialStartUtc))
+                {
+                    _configMgr.Config.TrialStartUtc = null;
+                    _configMgr.Save();
+                }
                 StatusChanged?.Invoke("● 授权: 已授权", Color.Green);
                 _log.Append("[授权] 授权码验证通过，已授权");
                 return;
@@ -79,20 +85,37 @@ namespace OpcDaToModbusGateway.Services
 
         private void StartTrialTimer()
         {
-            _trialStopwatch = Stopwatch.StartNew();
             _trialExpired = false;
+
+            // 尝试从配置读取已保存的试用起始时间
+            DateTime trialStartUtc = DateTime.MinValue;
+            bool hasSavedStart = !string.IsNullOrEmpty(_configMgr.Config?.TrialStartUtc)
+                && DateTime.TryParse(_configMgr.Config.TrialStartUtc, out trialStartUtc);
+
+            if (hasSavedStart)
+            {
+                _trialStartUtc = trialStartUtc;
+                _log.Append($"[授权] 检测到已保存试用起始时间: {trialStartUtc:O}，已用 {(DateTime.UtcNow - trialStartUtc).TotalMinutes:F1} 分钟");
+            }
+            else
+            {
+                // 首次试用，记录起始时间
+                _trialStartUtc = DateTime.UtcNow;
+                _configMgr.Config.TrialStartUtc = _trialStartUtc.ToString("o"); // ISO 8601 UTC
+                _configMgr.Save();
+                _log.Append($"[授权] 试用倒计时 {AppConstants.TrialPeriodMinutes} 分钟已开始（起始时间已持久化）");
+            }
 
             _licenseTimer = new Timer { Interval = 1000 };
             _licenseTimer.Tick += LicenseTimer_Tick;
             _licenseTimer.Start();
 
             UpdateTrialStatus();
-            _log.Append($"[授权] 试用倒计时 {AppConstants.TrialPeriodMinutes} 分钟已开始");
         }
 
         private void LicenseTimer_Tick(object sender, EventArgs e)
         {
-            TimeSpan remaining = TimeSpan.FromMinutes(AppConstants.TrialPeriodMinutes) - _trialStopwatch.Elapsed;
+            TimeSpan remaining = TimeSpan.FromMinutes(AppConstants.TrialPeriodMinutes) - (DateTime.UtcNow - _trialStartUtc);
 
             if (remaining.TotalSeconds <= 0)
             {
@@ -110,7 +133,7 @@ namespace OpcDaToModbusGateway.Services
         private void UpdateTrialStatus(TimeSpan? remaining = null)
         {
             if (remaining == null)
-                remaining = TimeSpan.FromMinutes(AppConstants.TrialPeriodMinutes) - _trialStopwatch.Elapsed;
+                remaining = TimeSpan.FromMinutes(AppConstants.TrialPeriodMinutes) - (DateTime.UtcNow - _trialStartUtc);
 
             int totalSeconds = (int)remaining.Value.TotalSeconds;
             string text = $"● 试用: {totalSeconds / 60:D2}:{totalSeconds % 60:D2}";
@@ -137,6 +160,7 @@ namespace OpcDaToModbusGateway.Services
                 _licenseTimer = null;
 
                 _configMgr.Config.AuthorizationCode = authCode;
+                _configMgr.Config.TrialStartUtc = null;
                 _configMgr.Save();
 
                 StatusChanged?.Invoke("● 授权: 已授权", Color.Green);

@@ -168,28 +168,37 @@ namespace OpcDaToModbusGateway.Services
                 await modbusServer.StartAsync().ConfigureAwait(false);
 
                 _log.Append("[2/3] 连接 OPC DA 服务器...");
-                try
+                // 将 DA 连接/加点位移入专用 STA 线程（COM 要求 STA），避免阻塞 UI 线程
+                var daConnectTcs = new TaskCompletionSource<OpcDaClient>();
+                var staThread = new Thread(() =>
                 {
-                    string daHost = string.IsNullOrEmpty(_config.OpcDa.ServerHost)
-                        ? "localhost" : _config.OpcDa.ServerHost;
-                    daClient = new OpcDaClient(_config.OpcDa.ServerProgId, _config.OpcDa.Tags, daHost);
-                    daClient.OnStatusChanged += msg =>
+                    try
                     {
-                        if (!msg.StartsWith("[诊断]"))
-                            _log.Append("  " + msg);
-                    };
-                    daClient.OnConfigChanged += () => ConfigDirty?.Invoke();
-                    daClient.Start(_config.OpcDa.UpdateRateMs, _config.OpcDa.GetEffectiveMode());
-                    daConnected = true;
-                }
-                catch (Exception daEx)
-                {
-                    // OPC DA 连接失败时不影响 Modbus TCP 服务运行：
-                    // 用户仍可使用 Modbus Poll / Modscan 验证服务器监听，DA 恢复后数据将自动流入
-                    _log.Append($"  ⚠ OPC DA 连接失败: {daEx.GetType().Name}: {daEx.Message}");
-                    _log.Append("  → Modbus TCP 服务保持运行，等待 DA 恢复后自动桥接数据");
-                    // 保留同一客户端实例，现有 DataBridge 将订阅它，健康检查可在其上重连。
-                }
+                        string daHost = string.IsNullOrEmpty(_config.OpcDa.ServerHost)
+                            ? "localhost" : _config.OpcDa.ServerHost;
+                        var client = new OpcDaClient(_config.OpcDa.ServerProgId, _config.OpcDa.Tags, daHost);
+                        client.OnStatusChanged += msg =>
+                        {
+                            if (!msg.StartsWith("[诊断]"))
+                                _log.Append("  " + msg);
+                        };
+                        client.OnConfigChanged += () => ConfigDirty?.Invoke();
+                        client.Start(_config.OpcDa.UpdateRateMs, _config.OpcDa.GetEffectiveMode());
+                        daConnectTcs.TrySetResult(client);
+                    }
+                    catch (Exception daEx)
+                    {
+                        _log.Append($"  ⚠ OPC DA 连接失败: {daEx.GetType().Name}: {daEx.Message}");
+                        _log.Append("  → Modbus TCP 服务保持运行，等待 DA 恢复后自动桥接数据");
+                        daConnectTcs.TrySetResult(null);
+                    }
+                });
+                staThread.SetApartmentState(ApartmentState.STA);
+                staThread.IsBackground = true;
+                staThread.Start();
+
+                daClient = await daConnectTcs.Task.ConfigureAwait(false);
+                daConnected = daClient != null;
 
                 _log.Append("[3/3] 启动数据桥接...");
                 // Start() 可能从 CanonicalDataType 回写真实 DA 类型，必须基于最终类型再次验证映射。
@@ -410,6 +419,18 @@ namespace OpcDaToModbusGateway.Services
                         Interlocked.Exchange(ref _lastReconnectAttemptTicks, 0); // H-34: 重置退避计时
                         DaStatusChanged?.Invoke("● DA: 已连接", Color.Green);
                         _log.Append("[监控] DA 重连成功");
+
+                        // 重连后 CanonicalDataType 已回写真实类型，必须重新校验映射防止地址重叠
+                        try
+                        {
+                            ValidateMappings(_config.OpcDa?.Tags);
+                            _log.Append("[监控] 重连后映射校验通过");
+                        }
+                        catch (Exception ex)
+                        {
+                            _log.Append($"[监控] 重连后映射校验失败: {ex.Message}");
+                            DaStatusChanged?.Invoke("● DA: 映射冲突", Color.Red);
+                        }
                     }
                 }
                 else if (attempts == MaxReconnectAttempts + 1)
