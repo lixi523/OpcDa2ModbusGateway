@@ -680,6 +680,15 @@ namespace OpcDaToModbusGateway
         {
             if (!_configMgr.Load())
             {
+                // #20 修复：服务层不再弹窗，由 UI 层读取 LastLoadError 自行呈现。
+                // 交互场景下弹框提示；用户可见提示仅在此处统一。
+                if (!string.IsNullOrEmpty(_configMgr.LastLoadError))
+                {
+                    MessageBox.Show(
+                        _configMgr.LastLoadError,
+                        "配置错误", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                }
+
                 // C-14 修复：配置加载失败时禁用所有交互控件，防止 null 引用
                 _btnStart.Enabled = false;
                 _btnStop.Enabled = false;
@@ -736,15 +745,18 @@ namespace OpcDaToModbusGateway
 
             _gatewayMgr.DaStatusChanged += (text, color) =>
             {
-                SafeInvoke(() => { _lblDaStatus.Text = text; _lblDaStatus.ForeColor = color; });
+                // #16 修复：高频状态事件改异步封送（SafeBeginInvoke），避免后台线程同步阻塞等 UI，
+                // 与 OnFormClosing 的 await StopAsync 组合不再死锁/卡顿。
+                SafeBeginInvoke(() => { _lblDaStatus.Text = text; _lblDaStatus.ForeColor = color; });
             };
             _gatewayMgr.ModbusStatusChanged += (text, color) =>
             {
-                SafeInvoke(() => { _lblModbusStatus.Text = text; _lblModbusStatus.ForeColor = color; });
+                SafeBeginInvoke(() => { _lblModbusStatus.Text = text; _lblModbusStatus.ForeColor = color; });
             };
             _watchdogMgr.StatusChanged += (text, color) =>
             {
-                SafeInvoke(() => { _lblWatchdogStatus.Text = text; _lblWatchdogStatus.ForeColor = color; });
+                // #16 修复：看门狗状态事件同样改异步封送
+                SafeBeginInvoke(() => { _lblWatchdogStatus.Text = text; _lblWatchdogStatus.ForeColor = color; });
             };
 
             _gatewayMgr.ConfigDirty += () => _configMgr?.SaveAllImmediate();
@@ -785,8 +797,9 @@ namespace OpcDaToModbusGateway
             _gatewayMgr.RunningStateChanged += (isRunning) =>
             {
                 // P2 修复：该事件由 GatewayManager 后台线程（StartAsync 经 ConfigureAwait(false) 后的延续）
-                // 触发，直接操作控件会抛 Cross-thread 异常。统一经 SafeInvoke 封送回 UI 线程。
-                SafeInvoke(() => SetUiRunningState(isRunning));
+                // 触发，直接操作控件会抛 Cross-thread 异常。
+                // #16 修复：改 SafeBeginInvoke（异步封送），委托内由 SafeBeginInvoke 自身查 IsDisposed。
+                SafeBeginInvoke(() => SetUiRunningState(isRunning));
             };
 
             // 恢复上次连接的 ProgId
@@ -834,6 +847,9 @@ namespace OpcDaToModbusGateway
             {
                 SafeInvoke(() => { _lblLicenseStatus.Text = text; _lblLicenseStatus.ForeColor = color; });
             };
+            // #13 修复：构造函数内触发的初始 StatusChanged 事件早于订阅，会被错过；
+            // 订阅后立即主动刷新一次，确保已授权模式下状态栏不永久停留"检测中"。
+            _licenseMgr.RefreshStatus();
             _licenseMgr.GatewayStopRequested += async () =>
             {
                 // 试用到期，停止网关 (在 UI 线程上执行)

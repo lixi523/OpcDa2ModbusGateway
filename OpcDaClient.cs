@@ -120,6 +120,10 @@ namespace OpcDaToModbusGateway
         {
             if (Volatile.Read(ref _disposedInt) == 1)
                 throw new ObjectDisposedException(nameof(OpcDaClient));
+            // #11 修复：已连接守卫 — 防止对已连接实例重复 Start 覆盖 _server/_group/_readTimer 导致 COM 资源与 Timer 泄漏。
+            // 重连路径（TryReconnect）先 Cleanup() 再 Start()，不会触发此守卫。
+            if (IsConnected)
+                throw new InvalidOperationException($"OpcDaClient 已连接，请先调用 Stop() 或 Dispose()。如需切换刷新率/模式，请走 TryReconnect 路径。");
             _lastMode = mode;
             try
             {
@@ -436,23 +440,32 @@ namespace OpcDaToModbusGateway
         /// </summary>
         private void Cleanup()
         {
+            // #7 修复：_group/_server 的读与置 null 统一在 _lifecycleLock 内完成，
+            // 保证与 TryReconnect/Dispose 互斥，消除“回调已取到旧引用但 Cleanup 已 Dispose”的窗口。
+            OpcDaGroup group;
+            OpcDaServer server;
+            lock (_lifecycleLock)
+            {
+                group = _group;
+                server = _server;
+            }
 
             try
             {
                 StopReadTimer();
 
-                if (_group != null)
+                if (group != null)
                 {
-                    try { _group.ValuesChanged -= OnValuesChanged; } catch { }
-                    try { _group.IsSubscribed = false; } catch { }
-                    try { _server?.RemoveGroup(_group); } catch { }
-                    try { ((IDisposable)_group).Dispose(); } catch { }
+                    try { group.ValuesChanged -= OnValuesChanged; } catch { }
+                    try { group.IsSubscribed = false; } catch { }
+                    try { server?.RemoveGroup(group); } catch { }
+                    try { ((IDisposable)group).Dispose(); } catch { }
                     _group = null;
                 }
 
-                if (_server != null)
+                if (server != null)
                 {
-                    try { _server.Dispose(); } catch { }
+                    try { server.Dispose(); } catch { }
                     _server = null;
                 }
 
@@ -474,10 +487,28 @@ namespace OpcDaToModbusGateway
 
         private void StopReadTimer()
         {
-            if (_readTimer != null)
+            var timer = _readTimer;
+            _readTimer = null;
+            if (timer != null)
             {
-                try { _readTimer.Dispose(); } catch { }
-                _readTimer = null;
+                // #7 修复：Timer.Dispose(WaitHandle) 等待正在执行的回调排空后再释放，
+                // 避免窗口内 _group 被 Dispose 后回调仍调 group.Read() 导致 COM 异常。
+                // 使用 AutoResetEvent 作为等待句柄，超时上限 5s 防止回调卡死时永久阻塞。
+                var handle = new AutoResetEvent(false);
+                try
+                {
+                    timer.Dispose(handle);
+                    // 给正在执行的回调一点排空时间（回调本身有 _disposedInt 守护，最多再跑一拍即退）
+                    handle.WaitOne(5000);
+                }
+                catch (Exception ex)
+                {
+                    OnStatusChanged?.Invoke($"停止读取定时器时出错: {ex.Message}");
+                }
+                finally
+                {
+                    handle.Dispose();
+                }
             }
         }
 

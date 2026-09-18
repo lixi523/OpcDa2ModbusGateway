@@ -369,6 +369,7 @@ namespace OpcDaToModbusGateway
         private static void RunComEnumerationOnStaThread(Dictionary<string, OpcServerInfo> servers)
         {
             Exception threadError = null;
+            var threadCompleted = new int[] { 0 }; // [0]: 1 = 线程已完成
             _staCancellationRequested = false;
 
             // C-02 修复：STA 线程使用独立局部字典收集结果，Join 后合并到主字典。
@@ -381,10 +382,12 @@ namespace OpcDaToModbusGateway
                 try
                 {
                     ScanViaComEnumeration(localResults);
+                    threadCompleted[0] = 1;
                 }
                 catch (Exception ex)
                 {
                     threadError = ex;
+                    threadCompleted[0] = 1; // 异常后线程也已退出
                 }
             });
 
@@ -415,13 +418,24 @@ namespace OpcDaToModbusGateway
                     Log("[COM枚举] 线程在取消后仍未响应，放弃等待（IsBackground 确保进程退出时清理）");
                 }
             }
+            completed = completed && threadCompleted[0] == 1;
 
-            // C-02 修复：合并局部结果到主字典。
-            // 此时 Join 已返回（或 Abort 已执行），STA 线程不再活动，写主字典是安全的。
-            foreach (var kvp in localResults)
+            // C-02 修复（竞态收尾）：仅当 STA 线程确认已退出（completed == true）时才合并。
+            // 超时放弃（completed == false）时，STA 线程可能仍卡在 COM 调用内部继续写 localResults，
+            // 此时遍历合并非线程安全的 Dictionary 会抛 InvalidOperationException 或损坏内部结构。
+            // 放弃合并的代价仅是丢失该次扫描的部分结果，下次重新扫描可恢复；
+            // 线程为 IsBackground，进程退出时自动终止，不会造成进程挂起。
+            if (completed)
             {
-                if (!servers.ContainsKey(kvp.Key))
-                    servers[kvp.Key] = kvp.Value;
+                foreach (var kvp in localResults)
+                {
+                    if (!servers.ContainsKey(kvp.Key))
+                        servers[kvp.Key] = kvp.Value;
+                }
+            }
+            else
+            {
+                Log($"[COM枚举] 线程未退出，跳过合并局部结果（避免字典竞态），已发现 {servers.Count} 个服务器");
             }
 
             if (threadError != null)

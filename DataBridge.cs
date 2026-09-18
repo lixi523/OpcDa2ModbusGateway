@@ -14,7 +14,9 @@ namespace OpcDaToModbusGateway
     /// </summary>
     public class DataBridge : IDataBridge
     {
-        private readonly IOpcDaClient _daClient; // 可能为 null（DA 未连接场景）
+        // _daClient 为 null 时表示降级模式：DA 尚未连接，仅启动 Modbus 服务，
+        // 待 DA 重连成功后 GatewayManager 会重建桥接实例（见 StartAsync 注释）。
+        private readonly IOpcDaClient _daClient;
         private readonly IGatewayModbusTcpServer _modbusServer;
 
         private readonly ConcurrentDictionary<string, TagConfig> _tagMap;
@@ -42,7 +44,10 @@ namespace OpcDaToModbusGateway
 
         public DataBridge(IOpcDaClient daClient, IGatewayModbusTcpServer modbusServer, List<TagConfig> tags)
         {
-            _daClient = daClient ?? throw new ArgumentNullException(nameof(daClient));
+            // daClient 允许为 null（DA 未连接降级场景）：此时 Modbus 服务照常启动，
+            // 桥接跳过 DA 订阅，GetSnapshots 仍可提供各标签的当前状态快照。
+            // 当 DA 重连成功后，GatewayManager.CheckHealth 会重建桥接实例（见 OnClientConfigChanged 补注册路径）。
+            _daClient = daClient; // 可为 null
             _modbusServer = modbusServer ?? throw new ArgumentNullException(nameof(modbusServer));
             if (tags == null) throw new ArgumentNullException(nameof(tags));
 
@@ -67,11 +72,17 @@ namespace OpcDaToModbusGateway
             // OnClientConfigChanged 补注册——这样 DA 未连接时 Modbus 服务仍能正常启动（降级运行）。
             RegisterModbusNodes();
 
-            _daClient.OnDataChanged += OnDaDataChanged;
-            _daClient.OnConfigChanged += OnClientConfigChanged;
+            // DA 未连接（_daClient == null）时跳过订阅，避免空引用；
+            // Modbus 服务已正常运行，待 GatewayManager 重连成功后重建桥接实例即可。
+            if (_daClient != null)
+            {
+                _daClient.OnDataChanged += OnDaDataChanged;
+                _daClient.OnConfigChanged += OnClientConfigChanged;
+            }
 
             int count = _tagMap.Count;
-            OnLog?.Invoke($"[Bridge] Modbus bridge started: {count} tags");
+            string status = _daClient != null ? "" : "（DA 未连接，降级模式）";
+            OnLog?.Invoke($"[Bridge] Modbus bridge started: {count} tags {status}");
         }
 
         private void RegisterModbusNodes()
@@ -230,7 +241,7 @@ namespace OpcDaToModbusGateway
             if (_disposed) return;
             _disposed = true;
 
-            if (Volatile.Read(ref _started) != 0)
+            if (Volatile.Read(ref _started) != 0 && _daClient != null)
             {
                 _daClient.OnDataChanged -= OnDaDataChanged;
                 _daClient.OnConfigChanged -= OnClientConfigChanged;

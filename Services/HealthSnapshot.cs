@@ -66,10 +66,14 @@ namespace OpcDaToModbusGateway.Services
             try
             {
                 if (!File.Exists(_dailyFile)) return;
+                // #17 修复：加载时按 Date 去重（防止历史遗留的重复行扭曲平均值），
+                // 并按 Date 排序确保缓存单调。
                 var lines = File.ReadAllLines(_dailyFile)
                     .Where(l => !string.IsNullOrWhiteSpace(l))
                     .Select(l => { try { return JsonConvert.DeserializeObject<DailySummary>(l); } catch { return null; } })
                     .Where(x => x != null)
+                    .GroupBy(x => x.Date)
+                    .Select(g => g.Last()) // 同日期取最新一条
                     .OrderBy(x => x.Date)
                     .ToList();
                 _dailyCache.AddRange(lines);
@@ -268,15 +272,20 @@ namespace OpcDaToModbusGateway.Services
                 }
             }
 
-            File.AppendAllText(_dailyFile, JsonConvert.SerializeObject(sum) + Environment.NewLine);
-
+            // #17 修复：改为单次原子写（tmp + File.Replace），消除"先 Append 再全量重写"
+            // 在重写中途失败时留下同 Date 重复行、扭曲平均值的风险。
             _dailyCache.Add(sum);
             if (_dailyCache.Count > MaxDailyRetentionDays)
                 _dailyCache.RemoveRange(0, _dailyCache.Count - MaxDailyRetentionDays);
 
             try
             {
-                File.WriteAllLines(_dailyFile, _dailyCache.Select(x => JsonConvert.SerializeObject(x)));
+                string tmpPath = _dailyFile + ".tmp";
+                File.WriteAllLines(tmpPath, _dailyCache.Select(x => JsonConvert.SerializeObject(x)));
+                if (File.Exists(_dailyFile))
+                    File.Replace(tmpPath, _dailyFile, null);
+                else
+                    File.Move(tmpPath, _dailyFile);
             }
             catch { }
 

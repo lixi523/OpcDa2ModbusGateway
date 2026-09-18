@@ -123,9 +123,21 @@ namespace OpcDaToModbusGateway.Services
 
         /// <summary>
         /// 获取看门狗是否正在运行。
-        /// 通过检查进程对象是否存在且未退出来判断。
+        /// #18 修复：持 _lock 且 try/catch 包裹 Process.HasExited（可能抛 Win32Exception），
+        /// 异常时返回 false 而非打穿调用方。
         /// </summary>
-        public bool IsRunning => _process != null && !_process.HasExited;
+        public bool IsRunning
+        {
+            get
+            {
+                lock (_lock)
+                {
+                    if (_process == null) return false;
+                    try { return !_process.HasExited; }
+                    catch { return false; }
+                }
+            }
+        }
 
         /// <summary>
         /// 状态变化事件 — 看门狗状态发生变化时触发。
@@ -281,8 +293,17 @@ namespace OpcDaToModbusGateway.Services
             {
                 // 第一步：先停止心跳，因为主进程即将退出，继续发送心跳没有意义，
                 // 且可能在事件句柄被释放后导致定时器回调异常。
-                try { _heartbeatTimer?.Dispose(); } catch { }
+                // #18 修复：先用 Dispose(WaitHandle) 等待正在执行的心跳回调排空，
+                // 再释放事件句柄，避免回调访问已 Dispose 的 _heartbeatEvent 抛异常。
+                var timerToDispose = _heartbeatTimer;
                 _heartbeatTimer = null;
+                if (timerToDispose != null)
+                {
+                    var drainHandle = new AutoResetEvent(false);
+                    try { timerToDispose.Dispose(drainHandle); } catch { }
+                    try { drainHandle.WaitOne(2000); } catch { }
+                    finally { drainHandle.Dispose(); }
+                }
                 try { _heartbeatEvent?.Dispose(); } catch { }
                 _heartbeatEvent = null;
 
@@ -358,33 +379,44 @@ namespace OpcDaToModbusGateway.Services
         /// </remarks>
         public void SignalGracefulExit()
         {
-            // 先停止心跳。原因：主进程即将退出，继续发送心跳会让看门狗
-            // 误以为主进程仍然健康，干扰退出后的状态判断。
-            try { _heartbeatTimer?.Dispose(); } catch { }
-            _heartbeatTimer = null;
-            try { _heartbeatEvent?.Dispose(); } catch { }
-            _heartbeatEvent = null;
-
-            // Set 优雅退出事件，让看门狗在主进程退出后不执行重启
-            try
+            lock (_lock)
             {
-                EventWaitHandle exitOk;
+                // 先停止心跳。原因：主进程即将退出，继续发送心跳会让看门狗
+                // 误以为主进程仍然健康，干扰退出后的状态判断。
+                // #18 修复：Dispose(WaitHandle) 等待心跳回调排空，再释放事件句柄。
+                var timerToDispose = _heartbeatTimer;
+                _heartbeatTimer = null;
+                if (timerToDispose != null)
+                {
+                    var drainHandle = new AutoResetEvent(false);
+                    try { timerToDispose.Dispose(drainHandle); } catch { }
+                    try { drainHandle.WaitOne(2000); } catch { }
+                    finally { drainHandle.Dispose(); }
+                }
+                try { _heartbeatEvent?.Dispose(); } catch { }
+                _heartbeatEvent = null;
+
+                // Set 优雅退出事件，让看门狗在主进程退出后不执行重启
                 try
                 {
-                    exitOk = EventWaitHandle.OpenExisting(ExitOkEventName);
+                    EventWaitHandle exitOk;
+                    try
+                    {
+                        exitOk = EventWaitHandle.OpenExisting(ExitOkEventName);
+                    }
+                    catch (WaitHandleCannotBeOpenedException)
+                    {
+                        // 看门狗可能尚未启动（未创建该事件），由主进程自行创建
+                        exitOk = new EventWaitHandle(false, EventResetMode.ManualReset, ExitOkEventName);
+                    }
+                    exitOk.Set();
+                    exitOk.Dispose();
+                    _log.Append("[守护] 已发送优雅退出信号，看门狗将保持运行但不重启主进程");
                 }
-                catch (WaitHandleCannotBeOpenedException)
+                catch (Exception ex)
                 {
-                    // 看门狗可能尚未启动（未创建该事件），由主进程自行创建
-                    exitOk = new EventWaitHandle(false, EventResetMode.ManualReset, ExitOkEventName);
+                    _log.Append($"[守护] 发送优雅退出信号失败: {ex.Message}");
                 }
-                exitOk.Set();
-                exitOk.Dispose();
-                _log.Append("[守护] 已发送优雅退出信号，看门狗将保持运行但不重启主进程");
-            }
-            catch (Exception ex)
-            {
-                _log.Append($"[守护] 发送优雅退出信号失败: {ex.Message}");
             }
         }
 

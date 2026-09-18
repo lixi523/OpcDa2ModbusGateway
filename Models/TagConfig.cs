@@ -268,6 +268,14 @@ namespace OpcDaToModbusGateway.Models
         public int MaxCoils { get; set; }
         public int MaxInputRegisters { get; set; }
         public int MaxDiscreteInputs { get; set; }
+
+        /// <summary>
+        /// IP 白名单配置，逗号或分号分隔的 IP 列表。
+        /// 为空时：监听 127.0.0.1 仅允许本机回环；监听 0.0.0.0 允许所有（已警告）。
+        /// 示例："192.168.1.100,192.168.1.101" 或 "10.0.0.5;10.0.0.6"。
+        /// </summary>
+        public string AllowedIps { get; set; }
+
         public string GetEffectiveListenAddress()
         {
             return string.IsNullOrEmpty(ListenAddress) ? "127.0.0.1" : ListenAddress;

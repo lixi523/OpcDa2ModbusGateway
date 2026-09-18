@@ -326,6 +326,69 @@ namespace OpcDaToModbusGateway.Services
         }
 
         /// <summary>
+        /// 降级恢复：创建新 DA 客户端并尝试连接。
+        /// 当 daClient == null（初始连接失败）或断开重连时使用。
+        /// 成功时通过锁内发布新客户端引用；失败时回滚资源并返回 false。
+        /// </summary>
+        private bool ConnectDaClient()
+        {
+            OpcDaClient newClient = null;
+            try
+            {
+                string daHost = string.IsNullOrEmpty(_config.OpcDa.ServerHost)
+                    ? "localhost" : _config.OpcDa.ServerHost;
+                newClient = new OpcDaClient(_config.OpcDa.ServerProgId, _config.OpcDa.Tags, daHost);
+                newClient.OnStatusChanged += msg =>
+                {
+                    if (!msg.StartsWith("[诊断]"))
+                        _log.Append("  " + msg);
+                };
+                newClient.OnConfigChanged += () => ConfigDirty?.Invoke();
+
+                // COM 要求 STA，用专用线程完成连接
+                var connectTcs = new TaskCompletionSource<bool>();
+                var staThread = new Thread(() =>
+                {
+                    try
+                    {
+                        newClient.Start(_config.OpcDa.UpdateRateMs, _config.OpcDa.GetEffectiveMode());
+                        connectTcs.TrySetResult(true);
+                    }
+                    catch (Exception ex)
+                    {
+                        _log.Append($"  ⚠ OPC DA 连接失败: {ex.GetType().Name}: {ex.Message}");
+                        connectTcs.TrySetResult(false);
+                    }
+                })
+                { IsBackground = true };
+                staThread.SetApartmentState(ApartmentState.STA);
+                staThread.Start();
+                bool ok = connectTcs.Task.Wait(TimeSpan.FromSeconds(60));
+                if (!ok)
+                {
+                    // 超时：COM 卡死，放弃该客户端
+                    _log.Append("  ⚠ OPC DA 连接超时（60s），本次放弃");
+                    try { newClient.Dispose(); } catch { }
+                    return false;
+                }
+
+                // 成功：发布新客户端引用，替换旧（null）客户端
+                lock (_lock)
+                {
+                    _daClient = newClient;
+                }
+                // 旧的（null）无需释放
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _log.Append($"  ⚠ 创建 DA 客户端失败: {ex.GetType().Name}: {ex.Message}");
+                try { newClient?.Dispose(); } catch { }
+                return false;
+            }
+        }
+
+        /// <summary>
         /// 健康检查 — 由外部定时器周期性调用，检测 DA 连接状态并在断开时自动重连。
         ///
         /// 重连策略：
@@ -376,11 +439,35 @@ namespace OpcDaToModbusGateway.Services
             {
                 if (!IsRunning) return;
                 daClient = _daClient;
-                if (daClient == null) return;
             }
 
+            // 降级场景：初始 DA 连接失败时 daClient == null（Modbus 服务保持运行），
+            // 此时需创建新客户端尝试建立连接，而非直接跳过（原逻辑会永远卡死在降级态）。
             try
             {
+                if (daClient == null)
+                {
+                    bool success = ConnectDaClient();
+                    if (success)
+                    {
+                        Interlocked.Exchange(ref _reconnectAttempts, 0);
+                        Interlocked.Exchange(ref _lastReconnectAttemptTicks, 0);
+                        DaStatusChanged?.Invoke("● DA: 已连接", Color.Green);
+                        _log.Append("[监控] DA 连接建立成功（降级恢复）");
+                        try
+                        {
+                            ValidateMappings(_config.OpcDa?.Tags);
+                            _log.Append("[监控] 重连后映射校验通过");
+                        }
+                        catch (Exception ex)
+                        {
+                            _log.Append($"[监控] 重连后映射校验失败: {ex.Message}");
+                            DaStatusChanged?.Invoke("● DA: 映射冲突", Color.Red);
+                        }
+                    }
+                    return;
+                }
+
                 if (daClient.IsConnected) return;
 
                 int completedAttempts = Volatile.Read(ref _reconnectAttempts);

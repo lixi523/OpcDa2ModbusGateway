@@ -243,6 +243,10 @@ namespace OpcDaToModbusGateway
             };
             worker.RunWorkerCompleted += (s, e) =>
             {
+                // #14 修复：对话框可能在扫描期间被关闭，回调需先判 IsDisposed/Disposing，
+                // 与 ItemSelectionDialog 的 SafeBeginInvoke 模式统一，避免 ObjectDisposedException。
+                if (IsDisposed || Disposing) return;
+
                 // H5 修复：BackgroundWorker 使用完毕后释放资源
                 (s as System.ComponentModel.BackgroundWorker)?.Dispose();
 

@@ -16,11 +16,15 @@ namespace OpcDaToModbusGateway.Services
         private readonly ConfigManager _configMgr;
         private readonly Action _requestGatewayStop;
         private readonly string _pcid;
-
+        /// <summary>PCID 生成失败（WMI 全失败）时进入拒绝态，拒绝进入试用模式。</summary>
+        private bool _pcidFailed;
         private bool _isLicensed;
         private bool _trialExpired;
         private DateTime _trialStartUtc;
-        private Timer _licenseTimer;
+        private DateTime _maxObservedTrialTimeUtc;
+        /// <summary>使用 System.Threading.Timer 而非 WinForms Timer，避免非 UI 线程构造时 Tick 不触发。</summary>
+        private System.Threading.Timer _licenseTimer;
+        private readonly object _licenseStatusLock = new object();
 
         /// <summary>授权状态变化（已授权/试用中/试用到期）。</summary>
         public event Action<string, Color> StatusChanged;
@@ -37,6 +41,33 @@ namespace OpcDaToModbusGateway.Services
         /// <summary>机器码 PCID。</summary>
         public string PCID => _pcid;
 
+        /// <summary>
+        /// #13 修复：主动刷新当前授权状态并触发 StatusChanged 事件。
+        /// 调用方（MainForm）应在订阅 StatusChanged 事件之后立即调用一次，
+        /// 确保已授权模式下状态栏不会因构造函数内早触发的初始事件被错过而永久停留"检测中"。
+        /// 幂等：多次调用只会重复推送当前状态，不产生副作用。
+        /// </summary>
+        public void RefreshStatus()
+        {
+            if (_pcidFailed)
+            {
+                StatusChanged?.Invoke("● 授权: 无法识别硬件，请检查 WMI 服务", Color.Red);
+                return;
+            }
+            if (_isLicensed)
+            {
+                StatusChanged?.Invoke("● 授权: 已授权", Color.Green);
+                return;
+            }
+            if (_trialExpired)
+            {
+                StatusChanged?.Invoke("● 授权: 试用到期", Color.Red);
+                return;
+            }
+            // 试用中：重新计算剩余时间并推送
+            UpdateTrialStatus();
+        }
+
         public LicenseManager(LogManager log, ConfigManager configMgr, Action requestGatewayStop)
         {
             _log = log ?? throw new ArgumentNullException(nameof(log));
@@ -44,7 +75,12 @@ namespace OpcDaToModbusGateway.Services
             _requestGatewayStop = requestGatewayStop;
 
             try { _pcid = LicenseAlgorithm.GeneratePCID(); }
-            catch { _pcid = "UNKNOWN"; }
+            catch (Exception ex)
+            {
+                _pcid = null;
+                _pcidFailed = true;
+                _log.Append($"[授权] 机器码 PCID 生成失败，进入拒绝态: {ex.Message}");
+            }
 
             _log.Append($"[授权] 机器码 PCID: {_pcid}");
 
@@ -53,6 +89,15 @@ namespace OpcDaToModbusGateway.Services
 
         private void Initialize()
         {
+            // PCID 生成失败：进入拒绝态，不启动试用定时器，避免绕过一机一码授权模型。
+            if (_pcidFailed)
+            {
+                _trialExpired = true; // 视为“到期”以拦截网关启动
+                StatusChanged?.Invoke("● 授权: 无法识别硬件，请检查 WMI 服务", Color.Red);
+                _log.Append("[授权] PCID 生成失败，拒绝进入试用模式");
+                return;
+            }
+
             string savedCode = _configMgr.Config?.AuthorizationCode;
             if (!string.IsNullOrEmpty(savedCode) && LicenseAlgorithm.VerifyAuthCode(_pcid, savedCode))
             {
@@ -95,39 +140,53 @@ namespace OpcDaToModbusGateway.Services
             if (hasSavedStart)
             {
                 _trialStartUtc = trialStartUtc;
+                _maxObservedTrialTimeUtc = DateTime.UtcNow; // 时钟回拨检测：记录最大已观测时间
                 _log.Append($"[授权] 检测到已保存试用起始时间: {trialStartUtc:O}，已用 {(DateTime.UtcNow - trialStartUtc).TotalMinutes:F1} 分钟");
             }
             else
             {
                 // 首次试用，记录起始时间
                 _trialStartUtc = DateTime.UtcNow;
+                _maxObservedTrialTimeUtc = _trialStartUtc;
                 _configMgr.Config.TrialStartUtc = _trialStartUtc.ToString("o"); // ISO 8601 UTC
                 _configMgr.Save();
                 _log.Append($"[授权] 试用倒计时 {AppConstants.TrialPeriodMinutes} 分钟已开始（起始时间已持久化）");
             }
 
-            _licenseTimer = new Timer { Interval = 1000 };
-            _licenseTimer.Tick += LicenseTimer_Tick;
-            _licenseTimer.Start();
+            _licenseTimer = new System.Threading.Timer(_ => LicenseTimerTickCallback(), null, 0, 1000);
 
             UpdateTrialStatus();
         }
 
-        private void LicenseTimer_Tick(object sender, EventArgs e)
+        private void LicenseTimerTickCallback()
         {
-            TimeSpan remaining = TimeSpan.FromMinutes(AppConstants.TrialPeriodMinutes) - (DateTime.UtcNow - _trialStartUtc);
-
-            if (remaining.TotalSeconds <= 0)
+            lock (_licenseStatusLock)
             {
-                _licenseTimer?.Stop();
-                _trialExpired = true;
-                StatusChanged?.Invoke("● 授权: 试用到期", Color.Red);
-                _log.Append("[授权] ★★★ 试用期已到，网关将自动关闭 ★★★");
-                GatewayStopRequested?.Invoke();
-                return;
-            }
+                DateTime nowUtc = DateTime.UtcNow;
 
-            UpdateTrialStatus(remaining);
+                // 时钟回拨检测：当前时间比已观测最大时间还早，说明系统时钟被回拨
+                if (nowUtc < _maxObservedTrialTimeUtc)
+                {
+                    _log.Append($"[授权] ⚠️ 检测到系统时钟回拨（当前 {nowUtc:O} < 最大观测 { _maxObservedTrialTimeUtc:O}），按已观测时间继续倒计时");
+                    nowUtc = _maxObservedTrialTimeUtc; // 使用最大已观测时间作为当前时间基准
+                }
+                _maxObservedTrialTimeUtc = nowUtc;
+
+                TimeSpan remaining = TimeSpan.FromMinutes(AppConstants.TrialPeriodMinutes) - (nowUtc - _trialStartUtc);
+
+                if (remaining.TotalSeconds <= 0)
+                {
+                    _licenseTimer?.Dispose();
+                    _licenseTimer = null;
+                    _trialExpired = true;
+                    StatusChanged?.Invoke("● 授权: 试用到期", Color.Red);
+                    _log.Append("[授权] ★★★ 试用期已到，网关将自动关闭 ★★★");
+                    GatewayStopRequested?.Invoke();
+                    return;
+                }
+
+                UpdateTrialStatus(remaining);
+            }
         }
 
         private void UpdateTrialStatus(TimeSpan? remaining = null)
@@ -155,9 +214,11 @@ namespace OpcDaToModbusGateway.Services
             {
                 _isLicensed = true;
                 _trialExpired = false;
-                _licenseTimer?.Stop();
-                _licenseTimer?.Dispose();
-                _licenseTimer = null;
+                lock (_licenseStatusLock)
+                {
+                    _licenseTimer?.Dispose();
+                    _licenseTimer = null;
+                }
 
                 _configMgr.Config.AuthorizationCode = authCode;
                 _configMgr.Config.TrialStartUtc = null;
@@ -176,9 +237,11 @@ namespace OpcDaToModbusGateway.Services
 
         public void Dispose()
         {
-            _licenseTimer?.Stop();
-            _licenseTimer?.Dispose();
-            _licenseTimer = null;
+            lock (_licenseStatusLock)
+            {
+                _licenseTimer?.Dispose();
+                _licenseTimer = null;
+            }
         }
     }
 }

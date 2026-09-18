@@ -23,6 +23,14 @@ namespace OpcDaToModbusGateway.Services
         private int _disposeGuard;
         private int _droppedCount;
 
+        // #19 修复：日志裁剪优化 — 环形缓冲 + 批量刷新
+        // 原实现每条日志 get/set _textBox.Text 全文（几万字符级），高频日志拖垮 UI 线程。
+        // 改为：UI 侧用 StringBuilder 累积，定时器每 200ms 合并一次刷新；
+        // 仅当累积行数超阈值时才做一次裁剪（Substring），消除每条全量 get/set。
+        private readonly StringBuilder _uiBuffer = new StringBuilder();
+        private readonly System.Threading.Timer _uiFlushTimer;
+        private const int LogUiFlushIntervalMs = 200;
+
         public LogManager(TextBox textBox)
         {
             _textBox = textBox ?? throw new ArgumentNullException(nameof(textBox));
@@ -36,6 +44,9 @@ namespace OpcDaToModbusGateway.Services
                 Name = "LogWriter"
             };
             _writerThread.Start();
+
+            // #19：UI 侧批量刷新定时器，每 200ms 把累积的日志行一次性追加到 TextBox
+            _uiFlushTimer = new System.Threading.Timer(_ => FlushUiBuffer(), null, LogUiFlushIntervalMs, LogUiFlushIntervalMs);
         }
 
         public void Append(string message)
@@ -48,15 +59,11 @@ namespace OpcDaToModbusGateway.Services
 
             if (_textBox != null && !_textBox.IsDisposed)
             {
-                try
+                // #19：累积到 StringBuilder，由定时器批量刷新 UI，避免每条日志 get/set 全文
+                lock (_uiBuffer)
                 {
-                    if (_textBox.InvokeRequired)
-                        _textBox.BeginInvoke((Action)(() => UpdateTextBox(uiLine)));
-                    else
-                        UpdateTextBox(uiLine);
+                    _uiBuffer.Append(uiLine);
                 }
-                catch (ObjectDisposedException) { }
-                catch (InvalidOperationException) { }
             }
 
             try
@@ -90,6 +97,9 @@ namespace OpcDaToModbusGateway.Services
             if (Interlocked.Exchange(ref _disposeGuard, 1) != 0) return;
             _disposed = true;
 
+            // #19：先释放 UI 批量刷新定时器，避免 Dispose 后回调仍访问 _textBox
+            try { _uiFlushTimer?.Dispose(); } catch { }
+
             _queue.CompleteAdding();
 
             if (!_writerThread.Join(TimeSpan.FromSeconds(5)))
@@ -101,9 +111,41 @@ namespace OpcDaToModbusGateway.Services
             _queue.Dispose();
         }
 
-        private void UpdateTextBox(string text)
+        /// <summary>
+        /// #19：由 UI 批量刷新定时器触发，把累积的日志行一次性追加到 TextBox。
+        /// 仅当累积行数达到 LogUiTrimThreshold 时才做裁剪（Substring 一次）。
+        /// 在 UI 线程执行（经 BeginInvoke 封送），保证跨线程安全。
+        /// </summary>
+        private void FlushUiBuffer()
         {
-            _textBox.AppendText(text);
+            string batch;
+            lock (_uiBuffer)
+            {
+                if (_uiBuffer.Length == 0) return;
+                batch = _uiBuffer.ToString();
+                _uiBuffer.Clear();
+            }
+
+            if (_textBox == null) return;
+            try
+            {
+                if (_textBox.IsDisposed) return;
+                if (_textBox.InvokeRequired)
+                    _textBox.BeginInvoke((Action)(() => AppendUiBatch(batch)));
+                else
+                    AppendUiBatch(batch);
+            }
+            catch (ObjectDisposedException) { }
+            catch (InvalidOperationException) { }
+        }
+
+        /// <summary>
+        /// #19：在 UI 线程执行的实际追加。批量写入后按需裁剪。
+        /// </summary>
+        private void AppendUiBatch(string batch)
+        {
+            _textBox.AppendText(batch);
+            // 仅当累积文本超阈值时裁剪一次，避免每条日志全文 get/set
             if (_textBox.TextLength > AppConstants.LogUiMaxChars)
                 _textBox.Text = _textBox.Text.Substring(_textBox.TextLength - AppConstants.LogUiTrimChars);
         }

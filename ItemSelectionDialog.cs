@@ -639,15 +639,24 @@ namespace OpcDaToModbusGateway
                         // 在列表中勾选匹配的点位，取消不匹配的
                         int matchCount = 0;
 
+                        // #15 修复：O(n×m) 线性查找 → O(n+m) 字典索引，避免 1 万点位 × 1 万 CSV 卡死 UI
+                        var importRecordIndex = new Dictionary<string, CsvImportRecord>(StringComparer.OrdinalIgnoreCase);
+                        foreach (var rec in importRecords)
+                        {
+                            if (string.IsNullOrEmpty(rec.ItemId)) continue;
+                            if (!importRecordIndex.ContainsKey(rec.ItemId))
+                                importRecordIndex[rec.ItemId] = rec;
+                        }
+
                         // 虚拟模式：更新 _checkedItemIds，然后刷新显示
                         // 先清空当前显示项的勾选状态
                         foreach (var item in _displayItems)
                             _checkedItemIds.Remove(item.ItemId);
 
-                        // 勾选匹配的项
+                        // 勾选匹配的项（O(1) 字典查找）
                         foreach (var item in _allItems)
                         {
-                            if (importRecords.Any(r => r.ItemId.Equals(item.ItemId, StringComparison.OrdinalIgnoreCase)))
+                            if (item.ItemId != null && importRecordIndex.ContainsKey(item.ItemId))
                             {
                                 _checkedItemIds.Add(item.ItemId);
                                 matchCount++;
@@ -761,13 +770,21 @@ namespace OpcDaToModbusGateway
             SelectedTags = new List<TagConfig>();
 
             // 虚拟模式：遍历 _allItems，通过 _checkedItemIds 判断勾选状态
+            // #15 修复：CSV 记录放入 Dictionary O(1) 查找，避免 O(n×m) 线性扫描
+            var importRecordIndex = new Dictionary<string, CsvImportRecord>(StringComparer.OrdinalIgnoreCase);
+            foreach (var rec in _importRecords)
+            {
+                if (string.IsNullOrEmpty(rec.ItemId)) continue;
+                if (!importRecordIndex.ContainsKey(rec.ItemId))
+                    importRecordIndex[rec.ItemId] = rec;
+            }
+
             foreach (var item in _allItems)
             {
                 if (_checkedItemIds.Contains(item.ItemId))
                 {
-                    // 查找 CSV 导入记录（如果有）
-                    var csvRecord = _importRecords.FirstOrDefault(r =>
-                        r.ItemId.Equals(item.ItemId, StringComparison.OrdinalIgnoreCase));
+                    // 查找 CSV 导入记录（如果有）— O(1) 字典查找
+                    var csvRecord = item.ItemId != null && importRecordIndex.TryGetValue(item.ItemId, out var rec) ? rec : null;
 
                     // 创建 TagConfig
                     var tag = new TagConfig

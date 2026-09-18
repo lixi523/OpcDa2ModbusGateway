@@ -64,6 +64,13 @@ namespace OpcDaToModbusGateway.Services
         public AppConfig Config { get; private set; }
 
         /// <summary>
+        /// #20 修复：最近一次 Load 失败的描述（成功时为 null）。
+        /// 服务层不再直接弹 MessageBox（无人值守场景会阻塞进程、中断看门狗心跳），
+        /// 改由 UI 层读取此属性自行决定如何呈现。
+        /// </summary>
+        public string LastLoadError { get; private set; }
+
+        /// <summary>
         /// 加载时的原始 JSON 文本。
         /// 保留原始文本的目的是支持向后兼容判断：通过检查 JSON 中是否包含某个字段名，
         /// 区分"用户显式设置了默认值"和"旧版本配置根本没有这个字段"。
@@ -112,9 +119,9 @@ namespace OpcDaToModbusGateway.Services
 
             if (!File.Exists(configPath))
             {
-                MessageBox.Show(
-                    "找不到配置文件 config.json！\n请确保该文件与程序在同一目录下。",
-                    "配置错误", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                // #20 修复：不再直接弹 MessageBox，改由 UI 层读 LastLoadError 决定呈现
+                LastLoadError = $"找不到配置文件 config.json！\n请确保该文件与程序在同一目录下。";
+                _log?.Append($"[配置] {LastLoadError}");
                 return false;
             }
 
@@ -193,12 +200,14 @@ namespace OpcDaToModbusGateway.Services
                 // H-40: 启动配置文件监视
                 StartWatching();
 
+                LastLoadError = null;
                 return true;
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"加载配置失败:\n{ex.Message}", "错误",
-                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+                // #20 修复：不再直接弹 MessageBox，改由 UI 层读 LastLoadError 决定呈现
+                LastLoadError = $"加载配置失败:\n{ex.Message}";
+                _log?.Append($"[配置] {LastLoadError}");
                 return false;
             }
         }
@@ -332,7 +341,15 @@ namespace OpcDaToModbusGateway.Services
             {
                 var configSnapshot = JObject.FromObject(Config);
                 (configSnapshot["OpcDa"] as JObject)?.Remove("Tags");
-                AtomicWrite(GetConfigPath(), configSnapshot.ToString(Formatting.Indented));
+                _suppressWatch = true;
+                try
+                {
+                    AtomicWrite(GetConfigPath(), configSnapshot.ToString(Formatting.Indented));
+                }
+                finally
+                {
+                    _suppressWatch = false;
+                }
             }
             catch (Exception ex)
             {
@@ -361,7 +378,15 @@ namespace OpcDaToModbusGateway.Services
                     var tagsWrapper = new { Tags = Config.OpcDa.Tags };
                     string tagsJson = JsonConvert.SerializeObject(tagsWrapper, Formatting.Indented);
 
-                    AtomicWrite(tagsPath, tagsJson);
+                    _suppressWatch = true;
+                    try
+                    {
+                        AtomicWrite(tagsPath, tagsJson);
+                    }
+                    finally
+                    {
+                        _suppressWatch = false;
+                    }
 
                     _log?.Append($"[配置] 已保存 {Config.OpcDa.Tags.Count} 个标签到 tags.json");
                 }
@@ -382,6 +407,7 @@ namespace OpcDaToModbusGateway.Services
                 _debounceTimer = null;
                 string tagsBackup = null;
                 bool tagsExisted = File.Exists(GetTagsPath());
+                _suppressWatch = true;
                 try
                 {
                     string tagsJson = JsonConvert.SerializeObject(
@@ -409,6 +435,10 @@ namespace OpcDaToModbusGateway.Services
                 {
                     _log?.Append($"保存完整配置失败: {ex.Message}");
                     return false;
+                }
+                finally
+                {
+                    _suppressWatch = false;
                 }
             }
         }
