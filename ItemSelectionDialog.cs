@@ -172,6 +172,10 @@ namespace OpcDaToModbusGateway
             };
             
             // 虚拟模式下处理勾选状态变化
+            // 注意：只更新数据源 _checkedItemIds，不直接写 Items[e.Index].Checked——
+            // 虚拟模式下 Items.Count 仅为已实例化可视行数，且强改可视行会与
+            // 控件虚拟项缓存竞态。RetrieveVirtualItem 已用 _checkedItemIds 供给
+            // 正确勾选状态，更新后仅 Invalidate 触发重绘即可。
             _listView.ItemCheck += (s, e) =>
             {
                 if (e.Index < 0 || e.Index >= _displayItems.Count) return;
@@ -181,6 +185,8 @@ namespace OpcDaToModbusGateway
                     _checkedItemIds.Add(item.ItemId);
                 else
                     _checkedItemIds.Remove(item.ItemId);
+
+                _listView.Invalidate();
             };
 
             _listView.Columns.Add("ItemId", "ItemId", 320);
