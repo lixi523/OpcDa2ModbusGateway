@@ -1,7 +1,8 @@
-# Handoff Document — OpcDa2Modbus Code Review Fixes (v2.3.0)
+# Handoff Document — OpcDa2Modbus (v2.3.0 + UI 修复)
 
-> 生成时间：2026-09-21 | 基于提交 `b4ec36b` (V2.3.0) + 本轮未提交修复
-> 前手版本：`docs/2026-09-16-code-review.md`（V2.2.0 审查，已删除）→ 已由 `docs/code-review-v2.3.0.md` 取代
+> 生成时间：2026-09-21 | 基于提交 `4336b2a` (UI 勾选修复) + `f81d6ef` (v2.3.0 审查修复提交)
+> 前手版本：`docs/2026-09-16-code-review.md`（V2.2.0 审查，已删除）→ 由 `docs/code-review-v2.3.0.md` 取代
+> 工作区当前干净（仅未跟踪发布包 `OpcDaToModbusGateway-v2.3.0.zip`，不入 git）
 
 ---
 
@@ -17,7 +18,7 @@
 
 ## 2. 当前进度
 
-**v2.3.0 全项目代码审查报告（`docs/code-review-v2.3.0.md`）修复状态：**
+**v2.3.0 全项目代码审查报告（`docs/code-review-v2.3.0.md`）修复状态（已提交 `f81d6ef`）：**
 
 | 等级 | 报告项数 | 已修复 | 部分修复 | 未修复 |
 |------|---------|--------|----------|--------|
@@ -25,18 +26,27 @@
 | 🟡 中危 | 15 | 14（#6-#9,#11-#20） | 1（#10） | 0 |
 | 🟢 低危 | 23 | — | — | 未处理（按需排期） |
 
-**验证结果**：
-- ✅ `dotnet build` — 0 警告 / 0 错误
-- ✅ `dotnet test` — 33 项单元测试全部通过
+**本轮额外提交**：
+
+| 提交 | 内容 |
+|------|------|
+| `f81d6ef` | 上述 20 项审查修复全部落地 + `docs/code-review-v2.3.0.md` 报告 |
+| `4336b2a` | 点位浏览窗口（`ItemSelectionDialog`）单个点位勾选/取消即时反馈修复（用户功能请求 + 2 轮 OCR 代码审查修正） |
+
+**验证结果**（两个提交后均验证）：
+- ✅ `dotnet build`（Debug + Release）— 0 警告 / 0 错误
+- ✅ `dotnet test`（Debug + Release）— 33 项单元测试全部通过
 
 > 注：#4 部分修复 = 0.0.0.0 暴露警告 + `AllowedIps` 白名单配置预留 + 防火墙提示；实际拦截依赖防火墙（NModbus slave 网络内部 accept，外部无法插拔）。
 > #10 部分修复 = 写入前地址边界/重叠校验已有；Word Swap（ABCD/CDAB/BADC）字序配置未实现。
 
 ---
 
-## 3. 本轮已完成修改（v2.3.0 审查）
+## 3. 已完成修改
 
-### 高危
+### 3.1 v2.3.0 审查修复（提交 `f81d6ef`，17 文件 +733/-318）
+
+#### 高危
 
 | # | 文件 | 修改 |
 |---|------|------|
@@ -46,7 +56,7 @@
 | #5 | `Services/LicenseManager.cs` | ① PCID 生成失败置 `_pcidFailed` 进入拒绝态（不启动试用，拦截网关）；② WinForms `Timer` 改 `System.Threading.Timer`；③ 时钟回拨检测 `_maxObservedTrialTimeUtc` |
 | #4 | `Models/TagConfig.cs` + `GatewayModbusTcpServer.cs` | `ModbusTcpConfig` 新增 `AllowedIps`；`StartAsync` 监听 0.0.0.0 时输出暴露警告 + 白名单提示 |
 
-### 中危
+#### 中危
 
 | # | 文件 | 修改 |
 |---|------|------|
@@ -63,6 +73,17 @@
 | #18 | `Services/WatchdogManager.cs` | `IsRunning` 持锁 + try/catch；`SignalGracefulExit` 全程持锁；心跳 Timer 用 `Dispose(WaitHandle)` 排空 |
 | #19 | `Services/LogManager.cs` | UI 日志改 `StringBuilder` 累积 + 200ms 批量刷新，批量追加后才按需裁剪；删除死代码 |
 | #20 | `Services/ConfigManager.cs` + `MainForm.cs` | `Load` 不再直接弹 MessageBox，改记录 `LastLoadError` 属性；MainForm 读取后自行呈现 |
+
+### 3.2 点位浏览窗口单点勾选/取消（提交 `4336b2a`，`ItemSelectionDialog.cs` +6 行）
+
+**背景**：用户要求"OPC DA 点位浏览窗口中，增加单个点位 勾选/取消 的功能"。窗口本就是 `VirtualMode` + `CheckBoxes` + `_checkedItemIds` 数据源 + `RetrieveVirtualItem` 供给模式，单点勾选数据层其实已工作，但缺即时视觉反馈。
+
+**方案演进（经 2 轮 OCR 审查修正）**：
+1. 第一版：`ItemCheck` 中直接写 `_listView.Items[e.Index].Checked = e.NewValue` → OCR 指出 virtual mode 下 `Items[e.Index]` 可能为 null（NRE 风险），且 `Items.Count` 仅为已实例化可视行数，守卫对滚出行是无效 no-op
+2. 中间版：`e.Item` 属性访问 → 编译错误（`ItemCheckEventArgs` 无 `Item` 属性，只有 `Index`/`CurrentValue`/`NewValue`）；且 `CheckState` 不能隐式转 `bool`
+3. **最终版（已提交）**：删掉直接写行属性的冗余块，`ItemCheck` 只更新数据源 `_checkedItemIds` + `_listView.Invalidate()` 触发重绘；`RetrieveVirtualItem` 在重绘时据数据源供给正确 `lvi.Checked`
+
+**为什么不直接改可视行**：虚拟模式下强行改 `Items[e.Index].Checked` 会与 ListView 内部虚拟项缓存竞态（快速滚动时可能闪烁/状态不一致）；而 `Invalidate()` + `RetrieveVirtualItem` 是框架标准的 virtual lifecycle 数据通路。
 
 ---
 
@@ -82,7 +103,8 @@
 | `Services/WatchdogManager.cs` | 看门狗管理 | 锁 + Timer 排空 |
 | `Services/LogManager.cs` | 双通道日志 | 批量刷新 |
 | `MainForm.cs` | WinForms UI | `RefreshStatus` + 异步封送 + 错误呈现 |
-| `ItemSelectionDialog.cs` / `ServerSelectionDialog.cs` | 对话框 | O(1) 查找 + 回调防护 |
+| `ItemSelectionDialog.cs` | 点位浏览对话框 | O(1) 查找 + virtual mode 勾选即时反馈（`4336b2a`） |
+| `ServerSelectionDialog.cs` | 服务器选择对话框 | 回调防护 |
 
 ---
 
@@ -104,6 +126,11 @@
 5. **三阶段启动顺序**：
    - `GatewayManager.StartAsync()`：Modbus → DA → Bridge，**严禁调换**；失败逆序回滚。DA 失败时降级运行（Modbus 保持，等待重连）
 
+6. **Virtual ListView 数据通路**（新增，来自 `4336b2a` 经验）：
+   - `ItemSelectionDialog` 的勾选状态唯一数据源是 `_checkedItemIds`；`RetrieveVirtualItem` 负责供给行，`ItemCheck` 只更新数据源 + `Invalidate()`
+   - **不要**在 `ItemCheck` 中直接写 `Items[e.Index].Checked`（virtual mode 下 NRE 风险 + 与虚拟缓存竞态 + 守卫失效）
+   - `ItemCheckEventArgs` 只有 `Index`/`CurrentValue`/`NewValue`，**没有** `Item` 属性
+
 ---
 
 ## 6. 已经否掉的方案
@@ -115,6 +142,9 @@
 | 试用期纯内存 `Stopwatch` | 重启即绕过；已改为持久化 `TrialStartUtc` + 时钟回拨检测 |
 | 配置迁移不抑制 watcher | 触发 `ConfigFileChanged` → 重入 `Load()` → 死循环；已全路径 `_suppressWatch` |
 | Modbus 白名单在 NModbus 层拦截 | NModbus slave 网络内部 accept 不可插拔；改为配置预留 + 防火墙提示 |
+| `ItemCheck` 直接写 `Items[e.Index].Checked` + 范围守卫 | virtual mode 下 `Items.Count` ≈ 可视行数，守卫对滚出行是 no-op；且强改可视行与虚拟项缓存竞态（见 §3.2，OCR 两轮审查否决） |
+| `ItemCheckEventArgs.Item` 属性 | 该 API 无此属性（编译 CS1061）；只有 Index/CurrentValue/NewValue |
+| `CheckState` 直接赋给 `ItemView.Checked`（bool） | 类型不匹配（CS0029），需 `== CheckState.Checked` 显式转换 |
 
 ---
 
@@ -127,14 +157,15 @@
 | #5 授权对称密钥 | 🟡 中 | 三层 XOR + HMAC 仅挡浅层静态分析，非对称迁移待 keygen 配套 |
 | 大量标签(5万+)启动时内存峰值 | 🟢 低 | `AddAllItems` 分批 2000 条，已验证可接受 |
 | 低严重度 23 项未处理 | 🟢 低 | 按需排期，不影响核心功能 |
+| `4336b2a` 仅编译/单测验证 | 🟢 低 | WinForms UI 人工交互路径未走查；建议在测试机跑一次浏览窗口手动勾选验证 |
 
 ---
 
 ## 8. 已经跑过的测试
 
 ```bash
-dotnet build    # 0 warnings, 0 errors
-dotnet test     # 33 passed, 0 failed, 0 skipped
+dotnet build    # Debug + Release 均 0 warnings, 0 errors
+dotnet test     # Debug + Release 均 33 passed, 0 failed, 0 skipped
 ```
 
 测试覆盖：
@@ -143,18 +174,22 @@ dotnet test     # 33 passed, 0 failed, 0 skipped
 - `OpcQualityTests` — 质量三态分类
 - `WatchdogRestartPolicyTests` — 重启策略/退避/上限
 
+> 注：UI 对话框（`ItemSelectionDialog`）无单元测试，`4336b2a` 的修改靠编译 + 既有 33 项测试回归保证，单点勾选行为需人工验证。
+
 ---
 
 ## 9. 下一步计划（可选，非阻塞）
 
 | 任务 | 优先级 | 说明 |
 |------|--------|------|
-| 低严重度 23 项按需修复 | P3 | 见报告 🟢 表；如 CsvHelper 提取、MainForm 拆分、DPAPI 加密授权码 |
-| `LicenseAlgorithm` 迁移至非对称签名 (Ed25519/RSA/ECDSA) | P2 | 需配套改 Keygen，处理旧授权码兼容 |
-| #10 Word Swap 配置项 (ABCD/CDAB/BADC) | P2 | 现场 PLC 对接痛点 |
-| #4 真正的 Modbus 层白名单拦截 | P2 | 需换可插拔网络实现或前置反向代理 |
+| 测试机人工验证 `4336b2a` 勾选交互 | P1 | 运行 Release exe → 点位浏览窗口 → 手动勾选/取消单点，确认视觉即时反馈 + 状态栏数量同步 |
 | CI 打包步骤加断言：种子 `config.json` ListenAddress == `127.0.0.1` | P1 | 防止 H1 回归 |
-| 提交本轮未提交修复 | P0 | `git status` 显示 14 文件已修改，需 `git commit` |
+| #10 Word Swap 配置项 (ABCD/CDAB/BADC) | P2 | 现场 PLC 对接痛点 |
+| `LicenseAlgorithm` 迁移至非对称签名 (Ed25519/RSA/ECDSA) | P2 | 需配套改 Keygen，处理旧授权码兼容 |
+| #4 真正的 Modbus 层白名单拦截 | P2 | 需换可插拔网络实现或前置反向代理 |
+| 低严重度 23 项按需修复 | P3 | 见 `docs/code-review-v2.3.0.md` 🟢 表；如 CsvHelper 提取、MainForm 拆分、DPAPI 加密授权码 |
+
+**重新打包提醒**：工作区根目录的 `OpcDaToModbusGateway-v2.3.0.zip`（未跟踪，939KB，09-16 生成）已落后于当前代码（不含 `f81d6ef`/`4336b2a`）。发布前需重新打包含 Keygen 隔离检查（见报告"做得好的地方"提醒）。
 
 ---
 
@@ -162,7 +197,11 @@ dotnet test     # 33 passed, 0 failed, 0 skipped
 
 ```
 请阅读 D:\Documents\Code\OpcDa2Modbus\handoff.md 了解项目现状。
-当前 v2.3.0 审查高危 4/5 + 中危 14/15 已修复，构建/测试通过（33/33）。
+当前 v2.3.0 审查高危 4/5 + 中危 14/15 已修复并提交（f81d6ef），
+点位浏览窗口单点勾选/取消即时反馈已修复并提交（4336b2a，经 2 轮 OCR 审查修正，
+教训：virtual mode 下 ItemCheck 只更新数据源 _checkedItemIds + Invalidate，勿直接写行属性）。
+构建 0 警告 0 错误，测试 33/33 通过（Debug + Release）。
 低严重度 23 项未处理，#4/#10 部分修复，#5 非对称签名待 keygen 配套。
+根目录 OpcDaToModbusGateway-v2.3.0.zip 已过期，发布前需重新打包。
 如需继续开发，请基于此上下文进行。
 ```

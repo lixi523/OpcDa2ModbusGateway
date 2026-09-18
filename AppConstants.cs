@@ -108,7 +108,7 @@ namespace OpcDaToModbusGateway
         // ══════════════════════════════════════════════════
 
         /// <summary>当前软件版本</summary>
-        public const string AppVersion = "2.3.0";
+        public const string AppVersion = "2.4.0";
 
         /// <summary>窗口标题（不含版本号）</summary>
         public const string WindowTitle = "OPC DA → Modbus TCP 网关";

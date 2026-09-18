@@ -13,9 +13,9 @@
     <ApplicationIcon>app.ico</ApplicationIcon>
     <!-- 要求以管理员权限运行：嵌入清单文件，requestedExecutionLevel=requireAdministrator -->
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Version>2.3.0</Version>
-    <AssemblyVersion>2.3.0.0</AssemblyVersion>
-    <FileVersion>2.3.0.0</FileVersion>
+    <Version>2.4.0</Version>
+    <AssemblyVersion>2.4.0.0</AssemblyVersion>
+    <FileVersion>2.4.0.0</FileVersion>
     <Company>OPC DA to Modbus Gateway</Company>
     <Product>OPC DA to Modbus TCP Gateway</Product>
     <Description>OPC DA 到 Modbus TCP 协议转换网关</Description>

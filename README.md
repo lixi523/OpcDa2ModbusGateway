@@ -2,7 +2,7 @@
 
 ![Build](https://github.com/lixi523/OpcDaToUaGateway/actions/workflows/build.yml/badge.svg)
 
-> 版本：**V2.2.0** ｜ 协议转换网关：将 OPC DA 数据源实时映射为 Modbus TCP 服务器，供上位 SCADA/MES/工业平台订阅。
+> 版本：**V2.4.0** ｜ 协议转换网关：将 OPC DA 数据源实时映射为 Modbus TCP 服务器，供上位 SCADA/MES/工业平台订阅。
 
 ---
 
@@ -91,6 +91,8 @@ dotnet build OpcDaToModbusGateway.sln -c Release -v minimal
 
 | 版本 | 日期 | 变更摘要 |
 |---|---|---|
+| **V2.4.0** | 2026-09-18 | **全项目代码审查修复 + 点位浏览窗口交互完善**：① 落地 v2.3.0 审查全部修复（高危 4/5 + 中危 14/15，`f81d6ef`）：DA 断连降级路径崩溃修复（DataBridge 接受 null daClient）、STA 线程超时字典竞态、Modbus 服务端并发保护（状态机 + 锁）、授权加固（PCID 拒绝态/Threading.Timer/时钟回拨检测）、配置自写回环抑制、Watchdog 锁与 Timer 排空、日志批量刷新、服务层去 MessageBox 等 20 项；② 点位浏览窗口（ItemSelectionDialog）单点勾选/取消即时视觉反馈修复（`4336b2a`，经 2 轮 OCR 代码审查修正，virtual mode 下只更新数据源 + Invalidate，不直接写行属性）；③ 版本统一升级至 2.4.0（主程序 + Watchdog + AppConstants）。构建 0 警告 0 错误，单元测试 33/33 通过。 |
+| **V2.3.0** | 2026-09-16 | **代码审查修复基线**：基于 `docs/code-review-v2.3.0.md` 全项目审查报告，修复 高危 4/5 + 中危 14/15；部分修复 #4（Modbus 白名单预留 AllowedIps + 防火墙提示）与 #10（多寄存器边界校验，Word Swap 待实现）。 |
 | **V2.2.0** | 2026-09-15 | **P0 端到端验证 + P1 发布治理与安全边界**：① P0 完成真实 OPC DA 服务器（Knight.OPC.Server.Demo）+ Modbus TCP 客户端 42 标签全量读验证，各类型数据转发正确、Double 实时变化；② P1-1 发布包隔离：Keygen 源码移出仓库（本地保留），主程序默认构建/发布不含 Keygen，CI 客户发布包白名单；③ P1-2 Modbus 网络边界：默认监听地址 `0.0.0.0` → `127.0.0.1`（仅本机回环，需外部访问时显式配置 `0.0.0.0` 或指定内网 IP）；④ 提交 `docs/archify` 架构图。版本统一升级至 2.2.0。 |
 | **V2.1.0** | 2026-08-06 | **CSV 导入健壮性修复 + CI 恢复**：修复映射导入将全逗号分隔行误当表头导致数据行错位、点表导入将 `",,,,"` 分隔行当首行导致真实表头变为幽灵数据行的问题（两处导入现统一跳过全逗号空行）；删除点表浏览对话框遗留死代码；恢复 Windows CI（restore → build → test → 打包发布）；回归测试增至 33 项。版本统一升级至 2.1.0。 |
 | **V2.0.0** | 2026-08-02 | **数据正确性与可靠性里程碑**：统一 Modbus 声明类型、寄存器宽度与高 word 编码，自动地址按四个地址空间分配并校验溢出/重叠；配置迁移采用原子保存，热重载保持运行配置引用稳定；OPC Quality 正确传播 Good/Uncertain/Bad，转换与 Modbus 写入显式报告失败；DA/Modbus 快照分离，监控值与实际寄存器状态一致；修复看门狗优雅退出、手工启动后重新武装及配置 watcher 并发问题；新增 net472/x86 MSTest，当前 29 项测试全部通过。版本统一升级至 2.0.0。**⚠ 兼容性提示**：32/64 位多寄存器编码由 1.x 的低 word 在前改为高 word 在前（大端序，符合 Modbus 惯例）；已有 1.x 部署升级后，Modbus 客户端读取 Int32/UInt32/Float/Double 寄存器需相应调整字节序。 |
